@@ -1,13 +1,17 @@
 """Importação e exportação CSV.
 
 - Importação de métricas: aceita cabeçalhos em português ou inglês, separador
-  vírgula ou ponto e vírgula, datas AAAA-MM-DD ou DD/MM/AAAA.
-- Exportação: UTF-8 com BOM (abre corretamente no Excel) e proteção contra
-  "CSV injection" (textos iniciados por = + - @ recebem um apóstrofo).
+  vírgula, ponto e vírgula ou tabulação (detectado pelo cabeçalho), datas
+  AAAA-MM-DD ou DD/MM/AAAA, arquivos UTF-8, UTF-16 ou ANSI (Windows) e finais
+  de linha de qualquer sistema.
+- Exportação: ponto e vírgula, vírgula decimal e todos os campos entre aspas
+  (padrão do Excel em português), UTF-8 com BOM e proteção contra "CSV
+  injection" (textos iniciados por = + - @ recebem um apóstrofo).
 """
 
 from __future__ import annotations
 
+import csv
 import io
 import re
 import unicodedata
@@ -16,7 +20,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
-from config import MAX_CSV_BYTES
+from config import MAX_CSV_BYTES, today
 from database import crud
 from database.connection import Database
 
@@ -30,10 +34,11 @@ METRIC_ALIASES = {
     "reach": ["reach", "alcance", "contas_alcancadas"],
     "views": ["views", "visualizacoes", "impressoes", "impressions"],
     "profile_visits": ["profile_visits", "visitas_perfil", "visitas_ao_perfil", "visitas"],
-    "interactions": ["interactions", "interacoes", "engajamento"],
+    "interactions": ["interactions", "interacoes"],
     "notes": ["notes", "observacoes", "notas", "obs"],
 }
 REQUIRED_METRIC_COLUMNS = ("date", "followers")
+MAX_COUNT = 10**12  # nenhuma métrica do Instagram chega perto disso
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
@@ -75,6 +80,8 @@ def parse_count(value) -> int | None:
         raise ValueError(f"número inválido “{text[:20]}”") from exc
     if number < 0 or not number.is_integer():
         raise ValueError(f"use números inteiros e não negativos (“{text[:20]}”)")
+    if number > MAX_COUNT:
+        raise ValueError(f"número grande demais (“{text[:20]}”)")
     return int(number)
 
 
@@ -90,57 +97,117 @@ class ImportReport:
         return not self.errors or (self.inserted + self.updated) > 0
 
 
-def read_csv_bytes(data: bytes) -> pd.DataFrame:
+def decode_csv(data: bytes) -> str:
     if len(data) > MAX_CSV_BYTES:
         raise ValueError(f"CSV maior que {MAX_CSV_BYTES // (1024 * 1024)} MB.")
-    if not data.strip():
-        raise ValueError("O arquivo CSV está vazio.")
-    text = None
-    for encoding in ("utf-8-sig", "latin-1"):
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings = ("utf-16",)
+    else:
+        # cp1252 é o "ANSI" do Excel no Windows; latin-1 nunca falha (último recurso).
+        encodings = ("utf-8-sig", "cp1252", "latin-1")
+    for encoding in encodings:
         try:
             text = data.decode(encoding)
             break
         except UnicodeDecodeError:
             continue
+    else:
+        raise ValueError("Não foi possível ler a codificação do arquivo. Salve como CSV UTF-8.")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")  # Windows, Mac antigo e Linux
+    if not text.strip():
+        raise ValueError("O arquivo CSV está vazio.")
+    return text
+
+
+def _detect_delimiter(header_line: str) -> str:
+    """Escolhe o separador interpretando o cabeçalho (vírgulas entre aspas não contam).
+
+    Prefere o separador que revela as colunas obrigatórias; senão, o que gera mais colunas.
+    """
+    aliases = _alias_map()
+    best, best_fields = None, 1
+    for delimiter in (";", ",", "\t"):
+        fields = next(csv.reader([header_line], delimiter=delimiter), [])
+        names = {aliases.get(_norm_header(f)) for f in fields}
+        if set(REQUIRED_METRIC_COLUMNS) <= names:
+            return delimiter
+        if len(fields) > best_fields:
+            best, best_fields = delimiter, len(fields)
+    if best is None:
+        raise ValueError("Não foi possível identificar o separador. Use vírgula ou ponto e vírgula.")
+    return best
+
+
+def read_csv_rows(data: bytes) -> tuple[list[str], list[tuple[int, list[str]]]]:
+    """Cabeçalho e linhas (com o número da linha física onde cada registro começa)."""
+    text = decode_csv(data)
+    delimiter = _detect_delimiter(text.lstrip("\n").split("\n", 1)[0])
+    # strict=True: uma aspa sem fechamento gera erro em vez de engolir o resto do arquivo.
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter, strict=True)
+    rows: list[tuple[int, list[str]]] = []
+    header: list[str] | None = None
     try:
-        df = pd.read_csv(io.StringIO(text), sep=None, engine="python", dtype=str, keep_default_na=False)
-    except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError) as exc:
-        raise ValueError("Não foi possível ler o CSV. Verifique o separador e o cabeçalho.") from exc
-    if len(df) > MAX_CSV_ROWS:
-        raise ValueError(f"O CSV tem mais de {MAX_CSV_ROWS} linhas.")
-    return df
+        last_line = 0
+        for row in reader:
+            start_line, last_line = last_line + 1, reader.line_num
+            if not any(cell.strip() for cell in row):
+                continue  # linhas em branco
+            if header is None:
+                header = [cell.strip() for cell in row]
+                continue
+            rows.append((start_line, row))
+            if len(rows) > MAX_CSV_ROWS:
+                raise ValueError(f"O CSV tem mais de {MAX_CSV_ROWS} linhas.")
+    except csv.Error as exc:
+        raise ValueError(
+            f"Não foi possível ler o CSV perto da linha {reader.line_num}. "
+            "Verifique o separador e se todas as aspas estão fechadas."
+        ) from exc
+    if header is None:
+        raise ValueError("O arquivo CSV está vazio.")
+    return header, rows
 
 
 def import_metrics_csv(db: Database, data: bytes, overwrite: bool = True) -> ImportReport:
     """Importa métricas; cada data é única (sobrescreve ou ignora se já existir)."""
-    df = read_csv_bytes(data)
+    header, rows = read_csv_rows(data)
     aliases = _alias_map()
-    rename = {}
-    for col in df.columns:
-        canonical = aliases.get(_norm_header(col))
-        if canonical and canonical not in rename.values():
-            rename[col] = canonical
-    df = df.rename(columns=rename)
-    missing = [c for c in REQUIRED_METRIC_COLUMNS if c not in df.columns]
+    columns: dict[str, int] = {}
+    for position, name in enumerate(header):
+        canonical = aliases.get(_norm_header(name))
+        if canonical and canonical not in columns:
+            columns[canonical] = position
+    missing = [c for c in REQUIRED_METRIC_COLUMNS if c not in columns]
     if missing:
         names = {"date": "data", "followers": "seguidores"}
         raise ValueError("Colunas obrigatórias ausentes: " + ", ".join(names[m] for m in missing))
 
     report = ImportReport()
     parsed: dict[str, dict] = {}
-    for idx, row in df.iterrows():
-        line = idx + 2  # +1 cabeçalho, +1 base 1
+    last_day = today()
+    for line, row in rows:
         try:
-            record = {"date": parse_date(row["date"]).isoformat()}
-            followers = parse_count(row["followers"])
+            extra = row[len(header):]
+            if any(cell.strip() for cell in extra):
+                raise ValueError(
+                    "há mais valores que colunas no cabeçalho (números com vírgula de milhar "
+                    "precisam estar entre aspas)"
+                )
+            row = row + [""] * (len(header) - len(row))
+            value = lambda col: row[columns[col]]  # noqa: E731
+            day = parse_date(value("date"))
+            if day > last_day:
+                raise ValueError(f"data no futuro ({day:%d/%m/%Y})")
+            record = {"date": day.isoformat()}
+            followers = parse_count(value("followers"))
             if followers is None:
                 raise ValueError("seguidores é obrigatório")
             record["followers"] = followers
             for col in ("following", "posts", "reach", "views", "profile_visits", "interactions"):
-                if col in df.columns:
-                    record[col] = parse_count(row[col])
-            if "notes" in df.columns and str(row["notes"]).strip():
-                record["notes"] = str(row["notes"]).strip()[:500]
+                if col in columns:
+                    record[col] = parse_count(value(col))
+            if "notes" in columns and value("notes").strip():
+                record["notes"] = value("notes").strip()[:500]
         except ValueError as exc:
             report.errors.append(f"Linha {line}: {exc}.")
             continue
@@ -181,8 +248,13 @@ def _sanitize_cell(value):
 
 
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
+    """CSV para Excel/Planilhas em português: “;”, vírgula decimal e campos entre aspas.
+
+    Com todos os campos entre aspas, um “;” ou “,” dentro de um texto nunca cria
+    uma célula nova que escape da proteção contra fórmulas.
+    """
     safe = df.copy()
     for col in safe.columns:
         if safe[col].dtype == object or pd.api.types.is_string_dtype(safe[col]):
             safe[col] = safe[col].map(_sanitize_cell)
-    return safe.to_csv(index=False).encode("utf-8-sig")
+    return safe.to_csv(index=False, sep=";", decimal=",", quoting=csv.QUOTE_ALL).encode("utf-8-sig")

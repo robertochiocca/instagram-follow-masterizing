@@ -15,12 +15,14 @@ from models.defaults import DEFAULT_FEED_WEIGHTS
 from services import feed_planner as fp
 from services import preferences
 from services.csv_io import to_csv_bytes
-from ui.components import confirm_button, done, empty_state, fmt_date, metric_grid, page_header
+from ui.components import confirm_button, done, empty_state, flash, fmt_date, metric_grid, page_header
 from ui.state import get_db, get_storage
 
 db = get_db()
 storage = get_storage()
 DRAFT = "feed_draft"
+SLOTS = "feed_slots"
+ZIP = "feed_zip"
 
 page_header(
     "Organizador do feed",
@@ -53,14 +55,87 @@ if not own:
                 "Envie fotos em “Minhas fotos” e marque as que deseja considerar para o feed.", icon="▦")
     st.stop()
 by_id = {r["id"]: r for r in own}
+model, cat_names = preferences.load_model(db)
+
+
+def preference_of(row: dict) -> float | None:
+    """Afinidade 0–1 com as referências (None = neutro enquanto não há dados suficientes)."""
+    return preferences.affinity(row, model, cat_names).percent / 100 if model.ready else None
+
+
+def load_version(version_id: int) -> None:
+    full = feeds_repo.get_version(db, version_id)
+    if not full:
+        flash("Essa versão não existe mais.", "warning")
+        return
+    ids = [i["image_id"] for i in full["items"]]
+    images_repo.set_feed_pool(db, ids, True)
+    st.session_state[DRAFT] = {
+        "sequence": ids,
+        "pins": {i["image_id"]: pos for pos, i in enumerate(full["items"]) if i["pinned"]},
+        "reasons": {}, "version_id": version_id,
+    }
+    st.session_state[SLOTS] = max(2, len(ids))
+    flash(f"“{full['name']}” carregada.")
+
+
+def render_versions(draft: dict | None, weights: dict) -> None:
+    st.subheader("4. Versões salvas")
+    versions = feeds_repo.list_versions(db)
+    if not versions:
+        st.caption("Nenhuma versão salva ainda.")
+        return
+    for v in versions:
+        with st.container(border=True):
+            a, b, c = st.columns([3, 1, 1], vertical_alignment="center")
+            a.markdown(f"**{v['name']}** · {v['item_count']} fotos · atualizada em {fmt_date(v['updated_at'])}")
+            b.button("Carregar", key=f"load_{v['id']}", width="stretch", on_click=load_version, args=(v["id"],))
+            with c:
+                if confirm_button("Excluir", f"del_version_{v['id']}", f"Excluir a versão “{v['name']}”?"):
+                    feeds_repo.delete_version(db, v["id"])
+                    if draft and draft.get("version_id") == v["id"]:
+                        draft["version_id"] = None  # o rascunho continua, mas sem vínculo
+                    done("Versão excluída.")
+
+    st.markdown("**Comparar sequências**")
+    choices = st.multiselect("Escolha até 3 versões", [v["id"] for v in versions], max_selections=3,
+                             format_func=lambda vid: next(v["name"] for v in versions if v["id"] == vid))
+    compare = []
+    if draft:
+        compare.append(("Rascunho atual", draft["sequence"]))
+    for vid in choices:
+        full = feeds_repo.get_version(db, vid)
+        if full:
+            compare.append((full["name"], [i["image_id"] for i in full["items"]]))
+    if len(compare) < 2:
+        st.caption("Selecione versões (e/ou tenha um rascunho) para comparar lado a lado.")
+        return
+    all_rows = images_repo.get_images_by_ids(db, {pid for _, s in compare for pid in s})
+    table = []
+    for name, seq_ids in compare:
+        fps = [fp.FeedPhoto.from_row(all_rows[pid], preference_of(all_rows[pid]))
+               for pid in seq_ids if pid in all_rows]
+        e = fp.evaluate_sequence(fps, weights)
+        table.append({"Sequência": name, "Fotos": len(fps), "Equilíbrio": e.overall, "Qualidade": e.quality,
+                      "Diversidade": e.diversity, "Coerência": e.coherence, "Preferência": e.preference,
+                      "Alertas": len(e.adjacent_alerts) + len(fp.repetition_warnings(fps))})
+    st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch")
+    cols = st.columns(len(compare))
+    for col, (name, seq_ids) in zip(cols, compare):
+        with col:
+            st.caption(name)
+            st.image(fp.grid_preview_png(storage, [all_rows[p] for p in seq_ids if p in all_rows], cell=120),
+                     width="stretch")
+
 
 # --- 1. Seleção das fotos consideradas ------------------------------------------------------------
 
 
-def toggle_pool(image_id: int) -> None:
-    images_repo.set_feed_pool(db, [image_id], st.session_state[f"pool_{image_id}"])
+def toggle_pool(image_id: int, key: str) -> None:
+    images_repo.set_feed_pool(db, [image_id], st.session_state[key])
 
 
+weights = get_setting(db, "feed_weights")
 pool = [r for r in own if r.get("in_feed_pool")]
 with st.expander(f"1. Fotos consideradas ({len(pool)} de {len(own)})", expanded=len(pool) < 3,
                  icon=":material/checklist:"):
@@ -82,21 +157,21 @@ with st.expander(f"1. Fotos consideradas ({len(pool)} de {len(own)})", expanded=
                 data = tile_bytes(r)
                 if data:
                     st.image(data, width="stretch")
-                st.checkbox(f"{r['technical_score']:.0f}", value=bool(r.get("in_feed_pool")),
-                            key=f"pool_{r['id']}", on_change=toggle_pool, args=(r["id"],))
+                # A chave inclui o valor salvo: se um botão em massa mudar o banco, a caixa
+                # é recriada com o valor novo em vez de manter o estado antigo.
+                in_pool = bool(r.get("in_feed_pool"))
+                key = f"pool_{r['id']}_{int(in_pool)}"
+                st.checkbox(f"{r['technical_score']:.0f}", value=in_pool, key=key,
+                            on_change=toggle_pool, args=(r["id"], key))
 
 if len(pool) < 2:
     st.info("Selecione pelo menos 2 fotos para montar uma sequência.")
+    render_versions(None, weights)
     st.stop()
 
 # --- 2. Parâmetros ----------------------------------------------------------------------------------
 
-model, cat_names = preferences.load_model(db)
-pref_values = {
-    r["id"]: (preferences.affinity(r, model, cat_names).percent / 100 if model.ready else None) for r in pool
-}
-photos = {r["id"]: fp.FeedPhoto.from_row(r, pref_values[r["id"]]) for r in pool}
-weights = get_setting(db, "feed_weights")
+photos = {r["id"]: fp.FeedPhoto.from_row(r, preference_of(r)) for r in pool}
 
 with st.expander("2. Critérios do algoritmo", icon=":material/tune:"):
     st.caption(
@@ -121,19 +196,30 @@ with st.expander("2. Critérios do algoritmo", icon=":material/tune:"):
 
 draft = st.session_state.get(DRAFT)
 if draft:
-    draft["sequence"] = [pid for pid in draft["sequence"] if pid in photos]
-    draft["pinned"] = [pid for pid in draft["pinned"] if pid in draft["sequence"]]
+    if "pins" not in draft:  # rascunho de uma versão anterior da página
+        draft["pins"] = {pid: draft["sequence"].index(pid) for pid in draft.pop("pinned", [])
+                         if pid in draft["sequence"]}
+    kept = [pid for pid in draft["sequence"] if pid in photos]
+    if kept != draft["sequence"]:
+        # Uma foto saiu da seleção: as fixadas voltam às suas posições.
+        draft["sequence"], draft["pins"] = fp.apply_pins(kept, draft["pins"])
+        draft["reasons"] = {}  # as explicações são por posição: deixam de valer
 
 st.subheader("3. Sequência")
 a, b = st.columns([1, 2], vertical_alignment="bottom")
 max_slots = min(30, len(pool))
-slots = a.number_input("Posições na grade", min_value=2, max_value=max_slots,
-                       value=min(max_slots, 9 if not draft else max(2, len(draft["sequence"]))), step=1)
+# O valor escolhido fica guardado; só é ajustado quando sai dos limites atuais.
+default_slots = len(draft["sequence"]) if draft else 9
+st.session_state[SLOTS] = min(max_slots, max(2, int(st.session_state.get(SLOTS, default_slots))))
+slots = a.number_input("Posições na grade", min_value=2, max_value=max_slots, step=1, key=SLOTS)
 if b.button("Gerar sugestão" if not draft else "Gerar nova sugestão (mantém as fixadas)",
             type="primary", icon=":material/auto_awesome:"):
-    pins = {draft["sequence"].index(pid): pid for pid in draft["pinned"]} if draft else {}
-    plan = fp.plan_feed(list(photos.values()), int(slots), pins, weights)
-    st.session_state[DRAFT] = {"sequence": plan.sequence, "pinned": list(pins.values()),
+    pins = draft["pins"] if draft else {}
+    honoured = {pos: pid for pid, pos in pins.items() if pos < int(slots)}
+    if len(honoured) < len(pins):
+        flash(f"{len(pins) - len(honoured)} foto(s) fixada(s) além da posição {int(slots)} foram soltas.", "warning")
+    plan = fp.plan_feed(list(photos.values()), int(slots), honoured, weights)
+    st.session_state[DRAFT] = {"sequence": plan.sequence, "pins": {pid: pos for pos, pid in honoured.items()},
                                "reasons": plan.reasons, "version_id": draft.get("version_id") if draft else None}
     st.rerun()
 
@@ -141,40 +227,53 @@ if not draft:
     st.info("Toque em “Gerar sugestão” para montar a primeira sequência ou carregue uma versão salva abaixo.")
 else:
     seq = draft["sequence"]
+    pins = draft["pins"]  # {id da foto: posição fixa}
 
+    # Os callbacks leem o rascunho do session_state no momento do toque.
     def move(index: int, delta: int) -> None:
-        j = index + delta
-        if 0 <= j < len(seq):
-            seq[index], seq[j] = seq[j], seq[index]
-            draft["reasons"] = {}
+        d = st.session_state[DRAFT]
+        order, j = d["sequence"], index + delta
+        if 0 <= j < len(order) and order[index] not in d["pins"] and order[j] not in d["pins"]:
+            order[index], order[j] = order[j], order[index]
+            d["reasons"] = {}
 
-    def toggle_pin(pid: int) -> None:
-        draft["pinned"] = [p for p in draft["pinned"] if p != pid] if pid in draft["pinned"] else draft["pinned"] + [pid]
+    def toggle_pin(index: int, pid: int) -> None:
+        d = st.session_state[DRAFT]
+        if d["pins"].pop(pid, None) is None:
+            d["pins"][pid] = index
 
     def remove(index: int) -> None:
-        pid = seq.pop(index)
-        draft["pinned"] = [p for p in draft["pinned"] if p != pid]
-        draft["reasons"] = {}
+        d = st.session_state[DRAFT]
+        pid = d["sequence"].pop(index)
+        d["pins"].pop(pid, None)
+        # As demais fotos fixadas continuam nas suas posições.
+        d["sequence"], d["pins"] = fp.apply_pins(d["sequence"], d["pins"])
+        d["reasons"] = {}
 
     # A grade é desenhada como uma imagem única: mantém as 3 colunas em qualquer tela.
-    pinned_now = {i for i, pid in enumerate(seq) if pid in draft["pinned"]}
+    pinned_now = set(pins.values())
     st.image(fp.grid_preview_png(storage, [by_id[pid] for pid in seq], cell=240, pinned_positions=pinned_now),
              width="stretch")
     st.caption("Marcador amarelo = posição fixada. Toque no número para mover, fixar ou retirar a foto.")
     with st.container(horizontal=True, gap="small"):
         for pos, pid in enumerate(seq):
-            pinned = pid in draft["pinned"]
+            pinned = pid in pins
             with st.popover(f"{pos + 1}{' 📌' if pinned else ''}"):
                 data = tile_bytes(by_id[pid])
                 if data:
                     st.image(data, width=120)
                 st.caption(f"{by_id[pid].get('original_name') or ''} · {by_id[pid]['technical_score']:.0f}/100")
+                locked_help = "Posições fixadas não se movem: solte a fixação antes."
+                before_locked = pinned or (pos > 0 and seq[pos - 1] in pins)
+                after_locked = pinned or (pos < len(seq) - 1 and seq[pos + 1] in pins)
                 st.button("◀ Mover para antes", key=f"l_{pos}", on_click=move, args=(pos, -1),
-                          disabled=pos == 0, width="stretch")
+                          disabled=pos == 0 or before_locked, width="stretch",
+                          help=locked_help if before_locked else None)
                 st.button("Mover para depois ▶", key=f"r_{pos}", on_click=move, args=(pos, 1),
-                          disabled=pos == len(seq) - 1, width="stretch")
+                          disabled=pos == len(seq) - 1 or after_locked, width="stretch",
+                          help=locked_help if after_locked else None)
                 st.button("Soltar posição" if pinned else "📌 Fixar nesta posição", key=f"p_{pos}",
-                          on_click=toggle_pin, args=(pid,), width="stretch")
+                          on_click=toggle_pin, args=(pos, pid), width="stretch")
                 st.button("✕ Tirar da sequência", key=f"x_{pos}", on_click=remove, args=(pos,),
                           width="stretch")
 
@@ -215,8 +314,8 @@ else:
 
     # --- Salvar e exportar ---
     rows = [by_id[pid] for pid in seq]
-    pinned_positions = {seq.index(p) for p in draft["pinned"]}
-    items = [{"image_id": pid, "pinned": pid in draft["pinned"]} for pid in seq]
+    pinned_positions = set(pins.values())
+    items = [{"image_id": pid, "pinned": pid in pins} for pid in seq]
     with st.container(border=True):
         a, b = st.columns([2, 1], vertical_alignment="bottom")
         name = a.text_input("Nome da versão", value=f"Versão {len(feeds_repo.list_versions(db)) + 1}", max_chars=80)
@@ -229,70 +328,33 @@ else:
                 draft["version_id"] = vid
                 done("Versão salva.")
         if draft.get("version_id") and st.button("Atualizar a versão carregada", icon=":material/sync:"):
-            feeds_repo.update_version(db, draft["version_id"], items, {"weights": weights})
-            done("Versão atualizada.")
+            try:
+                feeds_repo.update_version(db, draft["version_id"], items, {"weights": weights})
+            except ValueError as exc:
+                draft["version_id"] = None
+                st.error(f"{exc} Use “Salvar como nova versão”.")
+            else:
+                done("Versão atualizada.")
     a, b, c = st.columns(3)
     a.download_button("Sequência (CSV)", to_csv_bytes(fp.sequence_dataframe(rows, pinned_positions)),
                       "sequencia_feed.csv", "text/csv", icon=":material/download:", width="stretch")
     b.download_button("Prévia da grade (PNG)", fp.grid_preview_png(storage, rows), "previa_grade.png",
                       "image/png", icon=":material/image:", width="stretch")
+    # O ZIP preparado só vale para a sequência exata em que foi gerado.
+    fingerprint = (tuple(seq), tuple(sorted(pins.items())))
+    prepared = st.session_state.get(ZIP)
+    if prepared and prepared["fingerprint"] != fingerprint:
+        st.session_state.pop(ZIP, None)
+        prepared = None
     if c.button("Preparar ZIP com fotos", icon=":material/folder_zip:", width="stretch"):
-        st.session_state["feed_zip"] = fp.export_zip(storage, rows, pinned_positions)
-    if st.session_state.get("feed_zip"):
-        st.download_button("Baixar ZIP (fotos na ordem de publicação)", st.session_state["feed_zip"],
+        prepared = {"fingerprint": fingerprint, "data": fp.export_zip(storage, rows, pinned_positions)}
+        st.session_state[ZIP] = prepared
+    if prepared:
+        st.download_button("Baixar ZIP (fotos na ordem de publicação)", prepared["data"],
                            "feed_ordem_publicacao.zip", "application/zip", type="primary",
-                           on_click=lambda: st.session_state.pop("feed_zip", None))
+                           on_click=lambda: st.session_state.pop(ZIP, None))
     st.caption("No ZIP, os arquivos vêm numerados na ordem de publicação: publique o 01 primeiro.")
 
 # --- 4. Versões salvas e comparação ---------------------------------------------------------------------
 
-st.subheader("4. Versões salvas")
-versions = feeds_repo.list_versions(db)
-if not versions:
-    st.caption("Nenhuma versão salva ainda.")
-else:
-    for v in versions:
-        with st.container(border=True):
-            a, b, c = st.columns([3, 1, 1], vertical_alignment="center")
-            a.markdown(f"**{v['name']}** · {v['item_count']} fotos · atualizada em {fmt_date(v['updated_at'])}")
-            if b.button("Carregar", key=f"load_{v['id']}", width="stretch"):
-                full = feeds_repo.get_version(db, v["id"])
-                images_repo.set_feed_pool(db, [i["image_id"] for i in full["items"]], True)
-                st.session_state[DRAFT] = {
-                    "sequence": [i["image_id"] for i in full["items"]],
-                    "pinned": [i["image_id"] for i in full["items"] if i["pinned"]],
-                    "reasons": {}, "version_id": v["id"],
-                }
-                done(f"“{v['name']}” carregada.")
-            with c:
-                if confirm_button("Excluir", f"del_version_{v['id']}", f"Excluir a versão “{v['name']}”?"):
-                    feeds_repo.delete_version(db, v["id"])
-                    done("Versão excluída.")
-
-    st.markdown("**Comparar sequências**")
-    choices = st.multiselect("Escolha até 3 versões", [v["id"] for v in versions], max_selections=3,
-                             format_func=lambda vid: next(v["name"] for v in versions if v["id"] == vid))
-    compare = []
-    if draft:
-        compare.append(("Rascunho atual", draft["sequence"]))
-    for vid in choices:
-        full = feeds_repo.get_version(db, vid)
-        compare.append((full["name"], [i["image_id"] for i in full["items"]]))
-    if len(compare) >= 2:
-        all_rows = images_repo.get_images_by_ids(db, {pid for _, s in compare for pid in s})
-        table = []
-        for name, seq_ids in compare:
-            fps = [fp.FeedPhoto.from_row(all_rows[pid], pref_values.get(pid)) for pid in seq_ids if pid in all_rows]
-            e = fp.evaluate_sequence(fps, weights)
-            table.append({"Sequência": name, "Fotos": len(fps), "Equilíbrio": e.overall, "Qualidade": e.quality,
-                          "Diversidade": e.diversity, "Coerência": e.coherence, "Preferência": e.preference,
-                          "Alertas": len(e.adjacent_alerts) + len(fp.repetition_warnings(fps))})
-        st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch")
-        cols = st.columns(len(compare))
-        for col, (name, seq_ids) in zip(cols, compare):
-            with col:
-                st.caption(name)
-                st.image(fp.grid_preview_png(storage, [all_rows[p] for p in seq_ids if p in all_rows], cell=120),
-                         width="stretch")
-    elif choices or versions:
-        st.caption("Selecione versões (e/ou tenha um rascunho) para comparar lado a lado.")
+render_versions(draft, weights)

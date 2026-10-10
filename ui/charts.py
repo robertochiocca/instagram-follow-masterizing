@@ -100,23 +100,30 @@ def projection_chart(projections: pd.DataFrame, target: int) -> alt.Chart:
 
 
 def weekly_gain_chart(table: pd.DataFrame) -> alt.Chart:
-    """Ganho líquido por semana: azul = ganho, vermelho = perda."""
-    data = table.dropna(subset=["ganho_liquido"]).copy()
+    """Ganho líquido médio por semana: azul = ganho, vermelho = perda.
+
+    Quando há semanas sem registro, o ganho do intervalo é dividido pelo número
+    de semanas, para não atribuir tudo a uma única barra.
+    """
+    data = table.dropna(subset=["ganho_medio_periodo"]).copy()
     data["Semana"] = pd.to_datetime(data["semana_ate"])
-    data["Ganho"] = data["ganho_liquido"].astype(int)
+    data["Ganho"] = data["ganho_medio_periodo"].astype(float)
+    data["Semanas"] = data["semanas_desde_anterior"].astype(int)
     data["Sinal"] = data["Ganho"].map(lambda v: "Ganho" if v >= 0 else "Perda")
     chart = (
         alt.Chart(data)
         .mark_bar(size=18, cornerRadiusEnd=4)
         .encode(
             x=alt.X("Semana:T", title=None, axis=alt.Axis(format="%d/%m", labelAngle=0)),
-            y=alt.Y("Ganho:Q", title="Seguidores líquidos"),
+            y=alt.Y("Ganho:Q", title="Seguidores líquidos por semana"),
             color=alt.Color(
                 "Sinal:N",
                 scale=alt.Scale(domain=["Ganho", "Perda"], range=[POSITIVE, NEGATIVE]),
                 legend=alt.Legend(title=None),
             ),
-            tooltip=[alt.Tooltip("Semana:T", title="Semana até", format="%d/%m/%Y"), "Ganho:Q"],
+            tooltip=[alt.Tooltip("Semana:T", title="Semana até", format="%d/%m/%Y"),
+                     alt.Tooltip("Ganho:Q", title="Média por semana", format="+.1f"),
+                     alt.Tooltip("Semanas:Q", title="Semanas no intervalo")],
         )
     )
     return _style(chart, height=220)

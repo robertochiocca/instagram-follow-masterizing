@@ -150,7 +150,7 @@ def _quick_reaction(db: Database, row: dict) -> None:
         label_visibility="collapsed",
         width="stretch",
     )
-    if choice != current and choice is not None:
+    if choice != current:  # inclui desmarcar (None) a reação atual
         images_repo.update_image(db, row["id"], {"reaction": choice})
         st.rerun()
 

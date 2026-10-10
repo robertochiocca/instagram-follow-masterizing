@@ -2,6 +2,10 @@
 
 [server]
 headless = true
+# Só aceita conexões do próprio computador (o encaminhamento do Codespaces funciona
+# assim). Para acessar pela rede local, use --server.address 0.0.0.0 e defina
+# IGT_APP_PASSWORD (veja o README).
+address = "localhost"
 # Teto absoluto por arquivo (MB). O limite efetivo por imagem é configurável
 # em IGT_MAX_UPLOAD_MB ou na página Configurações (até este valor).
 maxUploadSize = 50

@@ -123,7 +123,7 @@ def summary(rows: list[dict[str, Any]], reference_day: date | None = None, stale
     limit = (day - timedelta(days=stale_days)).isoformat()
     stale = [
         r for r in rows
-        if r["status"] == "pendente" and (r.get("last_reviewed_at") or r["followed_at"]) <= limit
+        if r["status"] == "pendente" and (r.get("last_reviewed_at") or r["followed_at"]) < limit
     ]
     week_start = (day - timedelta(days=7)).isoformat()
     return {

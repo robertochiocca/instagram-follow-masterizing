@@ -10,7 +10,17 @@ from models.vocab import DISCOVERY_SOURCES, INTEREST_STATUS, PRIORITY
 from services import follows, interests
 from services.csv_io import to_csv_bytes
 from services.handles import profile_url
-from ui.components import actions_row, confirm_button, done, empty_state, fmt_date, page_header, paginate
+from ui.components import (
+    actions_row,
+    confirm_button,
+    done,
+    empty_state,
+    fmt_date,
+    form_key,
+    page_header,
+    paginate,
+    reset_form,
+)
 from ui.state import get_db
 
 db = get_db()
@@ -28,7 +38,7 @@ PRIORITY_ICONS = {"alta": "🔺", "media": "▪️", "baixa": "🔻"}
 
 def interest_form(key: str, record: dict | None = None) -> dict | None:
     record = record or {}
-    with st.form(key, clear_on_submit=record == {}):
+    with st.form(key):
         a, b = st.columns(2)
         username = a.text_input("Nome de usuário ou URL do perfil *", value=record.get("username", ""),
                                 placeholder="@usuario")
@@ -58,13 +68,14 @@ def interest_form(key: str, record: dict | None = None) -> dict | None:
 
 all_rows = interests.list_interests(db)
 with st.expander("Adicionar perfil", expanded=not all_rows, icon=":material/person_add:"):
-    data = interest_form("add_interest")
+    data = interest_form(form_key("add_interest"))
     if data:
         try:
             interests.add_interest(db, data)
         except ValueError as exc:
             st.error(str(exc))
         else:
+            reset_form("add_interest")
             done("Perfil adicionado.")
 
 if not all_rows:

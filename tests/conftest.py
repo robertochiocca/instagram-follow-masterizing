@@ -67,3 +67,57 @@ def app_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("IGT_DATA_DIR", str(data_dir))
     monkeypatch.delenv("IGT_APP_PASSWORD", raising=False)
     return data_dir
+
+
+def matrix_icc_profile(primaries, gamma: float = 2.2, description: str = "Teste P3") -> bytes:
+    """Perfil ICC v2 mínimo (matriz + curva gama) para testar conversão de cor.
+
+    `primaries` = colorantes R, G e B em XYZ (D50).
+    """
+    import struct
+
+    def s15(v):
+        return struct.pack(">i", int(round(v * 65536)))
+
+    def xyz(x, y, z):
+        return b"XYZ " + b"\0" * 4 + s15(x) + s15(y) + s15(z)
+
+    ascii_desc = description.encode("ascii") + b"\0"
+    desc = (b"desc" + b"\0" * 4 + struct.pack(">I", len(ascii_desc)) + ascii_desc
+            + b"\0" * 8 + b"\0" * 3 + b"\0" * 67)
+    curve = b"curv" + b"\0" * 4 + struct.pack(">I", 1) + struct.pack(">H", int(gamma * 256)) + b"\0\0"
+    tags = [(b"desc", desc), (b"wtpt", xyz(0.9642, 1.0, 0.8249)),
+            (b"rXYZ", xyz(*primaries[0])), (b"gXYZ", xyz(*primaries[1])), (b"bXYZ", xyz(*primaries[2])),
+            (b"rTRC", curve), (b"gTRC", curve), (b"bTRC", curve),
+            (b"cprt", b"text" + b"\0" * 4 + b"teste\0")]
+    offset = 128 + 4 + 12 * len(tags)
+    table, blob = b"", b""
+    for sig, data in tags:
+        while (offset + len(blob)) % 4:
+            blob += b"\0"
+        table += sig + struct.pack(">II", offset + len(blob), len(data))
+        blob += data
+    body = struct.pack(">I", len(tags)) + table + blob
+    header = (struct.pack(">I", 128 + len(body)) + b"\0" * 4 + struct.pack(">I", 0x02100000)
+              + b"mntrRGB XYZ " + b"\0" * 12 + b"acsp" + b"\0" * 24 + struct.pack(">I", 0)
+              + s15(0.9642) + s15(1.0) + s15(0.8249) + b"\0" * 48)
+    return header + body
+
+
+DISPLAY_P3_D50 = [(0.5151, 0.2412, -0.0011), (0.2919, 0.6922, 0.0419), (0.1572, 0.0666, 0.7841)]
+
+
+def malformed_exif_orientation(orientation: int = 6) -> bytes:
+    """Bloco EXIF com orientação válida e XResolution gravado como texto (tipo errado).
+
+    O Pillow lê a orientação, mas falha ao regravar esse EXIF (caso real de
+    algumas câmeras e aplicativos).
+    """
+    import struct
+
+    entries = [
+        struct.pack("<HHI", 0x0112, 3, 1) + struct.pack("<HH", orientation, 0),  # SHORT
+        struct.pack("<HHI", 0x011A, 2, 3) + b"72\0\0",  # XResolution como ASCII
+    ]
+    ifd = struct.pack("<H", len(entries)) + b"".join(entries) + struct.pack("<I", 0)
+    return b"Exif\0\0" + b"II*\0" + struct.pack("<I", 8) + ifd

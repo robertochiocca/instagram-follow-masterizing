@@ -188,17 +188,40 @@ def seed_defaults(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT OR IGNORE INTO profile (id, updated_at) VALUES (1, ?)", (ts,))
 
 
+def _statements(script: str) -> list[str]:
+    return [stmt.strip() for stmt in script.split(";") if stmt.strip()]
+
+
 def migrate(conn: sqlite3.Connection) -> int:
-    """Aplica migrações pendentes e devolve a versão final do schema."""
-    current = conn.execute("PRAGMA user_version").fetchone()[0]
-    if current > SCHEMA_VERSION:
-        raise RuntimeError(
-            "O banco de dados foi criado por uma versão mais nova da aplicação. "
-            "Atualize o código antes de continuar."
-        )
-    for version in sorted(v for v in MIGRATIONS if v > current):
-        conn.executescript("BEGIN;" + MIGRATIONS[version] + f"PRAGMA user_version = {version};COMMIT;")
-        if version == 1:
-            seed_defaults(conn)
-            conn.commit()
+    """Aplica migrações pendentes e devolve a versão final do schema.
+
+    Tudo roda numa única transação com trava de escrita (BEGIN IMMEDIATE): dois
+    processos abrindo um banco novo ao mesmo tempo não colidem, e uma interrupção
+    nunca deixa o schema (nem os dados iniciais) pela metade.
+    """
+    previous = conn.isolation_level
+    conn.isolation_level = None  # controle manual da transação
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = conn.execute("PRAGMA user_version").fetchone()[0]
+            if current > SCHEMA_VERSION:
+                raise RuntimeError(
+                    "O banco de dados foi criado por uma versão mais nova da aplicação. "
+                    "Atualize o código antes de continuar."
+                )
+            for version in sorted(v for v in MIGRATIONS if v > current):
+                for statement in _statements(MIGRATIONS[version]):
+                    conn.execute(statement)
+                conn.execute(f"PRAGMA user_version = {version}")
+            if current == 0:
+                # Só na criação do banco (na mesma transação): categorias padrão que o
+                # usuário apagar depois não voltam sozinhas.
+                seed_defaults(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.isolation_level = previous
     return conn.execute("PRAGMA user_version").fetchone()[0]

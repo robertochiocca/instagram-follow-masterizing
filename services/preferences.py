@@ -148,7 +148,9 @@ class PreferenceModel:
         return max(0.0, w)
 
     def ranked(self, positive: bool = True, min_count: int = MIN_FEATURE_COUNT) -> list[FeatureStat]:
-        items = [s for s in self.stats.values() if s.count >= min_count]
+        """Características ordenadas; as de peso 0 (“ignorar”) ficam de fora, como na afinidade."""
+        items = [s for s in self.stats.values()
+                 if s.count >= min_count and self.weight(s.group, s.value) > 0]
         items = [s for s in items if (s.preference > 0) == positive and s.preference != 0]
         return sorted(
             items,

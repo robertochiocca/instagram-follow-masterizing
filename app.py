@@ -30,27 +30,27 @@ get_db()  # cria/migra o banco na primeira execução
 
 pages = {
     "Início": [
-        st.Page("pages/dashboard.py", title="Dashboard", icon=":material/monitoring:", default=True),
+        st.Page("views/dashboard.py", title="Dashboard", icon=":material/monitoring:", default=True),
     ],
     "Fotos": [
-        st.Page("pages/minhas_fotos.py", title="Minhas fotos", icon=":material/photo_library:"),
-        st.Page("pages/organizador_feed.py", title="Organizador do feed", icon=":material/grid_view:"),
-        st.Page("pages/minhas_referencias.py", title="Minhas referências", icon=":material/style:"),
+        st.Page("views/minhas_fotos.py", title="Minhas fotos", icon=":material/photo_library:"),
+        st.Page("views/organizador_feed.py", title="Organizador do feed", icon=":material/grid_view:"),
+        st.Page("views/minhas_referencias.py", title="Minhas referências", icon=":material/style:"),
     ],
     "Perfil e rede": [
-        st.Page("pages/meu_perfil.py", title="Meu perfil", icon=":material/person:"),
-        st.Page("pages/perfis_interesse.py", title="Perfis de interesse", icon=":material/bookmarks:"),
-        st.Page("pages/acompanhamento.py", title="Acompanhamento", icon=":material/how_to_reg:"),
+        st.Page("views/meu_perfil.py", title="Meu perfil", icon=":material/person:"),
+        st.Page("views/perfis_interesse.py", title="Perfis de interesse", icon=":material/bookmarks:"),
+        st.Page("views/acompanhamento.py", title="Acompanhamento", icon=":material/how_to_reg:"),
     ],
     "Planejamento": [
         st.Page(
-            "pages/planejador_conteudo.py",
+            "views/planejador_conteudo.py",
             title="Planejador de conteúdo",
             icon=":material/calendar_month:",
         ),
     ],
     "Sistema": [
-        st.Page("pages/configuracoes.py", title="Configurações", icon=":material/settings:"),
+        st.Page("views/configuracoes.py", title="Configurações", icon=":material/settings:"),
     ],
 }
 

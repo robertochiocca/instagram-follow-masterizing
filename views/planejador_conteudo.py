@@ -13,7 +13,17 @@ from database.settings import get_setting, set_setting
 from models.vocab import CONTENT_OBJECTIVES, CONTENT_STATUS, CONTENT_TYPES, WEEKDAYS
 from services import content_planner as cp
 from services.csv_io import to_csv_bytes
-from ui.components import confirm_button, done, empty_state, fmt_date, fmt_num, metric_grid, page_header
+from ui.components import (
+    confirm_button,
+    done,
+    empty_state,
+    fmt_date,
+    fmt_num,
+    form_key,
+    metric_grid,
+    page_header,
+    reset_form,
+)
 from ui.state import get_db
 
 db = get_db()
@@ -31,7 +41,7 @@ TYPE_ICONS = {"reels": "🎬", "carrossel": "🖼️", "foto": "📷", "stories"
 
 def item_form(key: str, item: dict | None = None) -> dict | None:
     item = item or {}
-    with st.form(key, clear_on_submit=not item):
+    with st.form(key):
         a, b, c = st.columns(3)
         planned = a.date_input("Data planejada", value=date.fromisoformat(item["planned_date"])
                                if item.get("planned_date") else day, format="DD/MM/YYYY")
@@ -74,13 +84,14 @@ tab_cal, tab_routine, tab_results = st.tabs(["Calendário", "Rotina sugerida", "
 
 with tab_cal:
     with st.expander("Adicionar conteúdo", icon=":material/add:"):
-        data = item_form("new_item")
+        data = item_form(form_key("new_item"))
         if data:
             try:
                 cp.add_item(db, data)
             except ValueError as exc:
                 st.error(str(exc))
             else:
+                reset_form("new_item")
                 done("Conteúdo adicionado.")
 
     everything = cp.list_items(db)
@@ -176,6 +187,8 @@ with tab_routine:
     if st.button("Gerar prévia da rotina", icon=":material/auto_awesome:"):
         st.session_state["schedule_preview"] = cp.generate_schedule(start, int(weeks), freq, themes)
     preview = st.session_state.get("schedule_preview")
+    if preview == []:
+        st.info("Nenhum item gerado: aumente a frequência ou escolha dias disponíveis para publicar.")
     if preview:
         st.dataframe(
             pd.DataFrame([

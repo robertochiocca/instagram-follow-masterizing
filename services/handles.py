@@ -23,11 +23,13 @@ def normalize_username(text: str) -> str:
     if "instagram.com" in raw.lower():
         url = raw if "://" in raw else "https://" + raw
         parts = [p for p in urlparse(url).path.split("/") if p]
+        if parts and parts[0].lower() == "_u":  # link do app: instagram.com/_u/usuario
+            parts = parts[1:]
         if not parts or parts[0].lower() in _RESERVED_PATHS:
             raise ValueError("A URL não parece ser de um perfil do Instagram.")
         raw = parts[0]
     username = raw.lstrip("@").strip().lower()
-    if not USERNAME_RE.match(username):
+    if not USERNAME_RE.match(username) or ".." in username or username.endswith(".") or not username.strip("."):
         raise ValueError(
             "Nome de usuário inválido: use até 30 caracteres entre letras, números, ponto e sublinhado."
         )

@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw, ImageOps
 from models.defaults import DEFAULT_FEED_WEIGHTS
 from models.vocab import CONTEXT, FRAMING, LIGHTING
 from services import image_analysis
+from services.csv_io import to_csv_bytes
 from services.image_storage import ImageStorage
 from services.photo_library import metrics_of
 from services.preferences import feature_phrase
@@ -41,6 +42,8 @@ ADJACENT_SIMILARITY_ALERT = 0.6
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    if x != x:  # NaN nunca vira nota máxima
+        return lo
     return max(lo, min(hi, x))
 
 
@@ -200,6 +203,23 @@ def plan_feed(
 
     sequence = [pid for pid in placed if pid is not None]
     return FeedPlan(sequence=sequence, reasons=reasons)
+
+
+def apply_pins(sequence: list[int], pins: dict[int, int]) -> tuple[list[int], dict[int, int]]:
+    """Recoloca cada foto fixada na sua posição; as demais ocupam as vagas na ordem atual.
+
+    `pins` = {id da foto: posição}. Fixações de fotos fora da sequência ou em posições
+    além do tamanho dela são descartadas (e não aparecem no dicionário devolvido).
+    """
+    n = len(sequence)
+    slots: list[int | None] = [None] * n
+    kept: dict[int, int] = {}
+    for pid, pos in sorted(pins.items(), key=lambda kv: kv[1]):
+        if pid in sequence and 0 <= pos < n and slots[pos] is None:
+            slots[pos] = pid
+            kept[pid] = pos
+    rest = iter(pid for pid in sequence if pid not in kept)
+    return [pid if pid is not None else next(rest) for pid in slots], kept
 
 
 def _explain(p: FeedPhoto, neigh: list[FeedPhoto], centroid) -> list[str]:
@@ -424,7 +444,7 @@ def export_zip(storage: ImageStorage, rows: list[dict], pinned_positions: set[in
                 zf.write(path, f"publicar_{publish_order:02d}_grade_{pos + 1:02d}.{ext}")
         zf.writestr(
             "sequencia.csv",
-            sequence_dataframe(rows, pinned_positions).to_csv(index=False).encode("utf-8-sig"),
+            to_csv_bytes(sequence_dataframe(rows, pinned_positions)),
         )
         zf.writestr("previa_grade.png", grid_preview_png(storage, rows))
         zf.writestr(
