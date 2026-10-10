@@ -1,0 +1,52 @@
+/* Estilo mobile-first: alvos de toque confortáveis, texto legível, pouco enfeite. */
+
+/* Botões com altura mínima de ~44 px (recomendação de acessibilidade para toque). */
+[data-testid^="stBaseButton"] {
+  min-height: 44px;
+}
+
+/* Campos com fonte >= 16 px evitam o zoom automático do Chrome no Android. */
+input, textarea, [data-baseweb="select"] {
+  font-size: 16px !important;
+}
+
+/* Largura confortável de leitura em tablets na horizontal. */
+[data-testid="stMainBlockContainer"] {
+  max-width: 1150px;
+  padding-top: 2.5rem;
+  padding-bottom: 4rem;
+}
+
+@media (max-width: 640px) {
+  [data-testid="stMainBlockContainer"] {
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+  h1 {
+    font-size: 1.55rem !important;
+  }
+}
+
+/* Miniaturas com cantos suaves. */
+[data-testid="stImage"] img {
+  border-radius: 6px;
+}
+
+/* Métricas mais compactas para caberem em 2 colunas no celular. */
+[data-testid="stMetricValue"] {
+  font-size: 1.6rem;
+}
+
+/* Amostras de cor da paleta. */
+.igt-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 4px 0 8px 0;
+}
+.igt-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}

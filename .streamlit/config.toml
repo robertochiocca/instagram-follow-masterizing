@@ -1,0 +1,22 @@
+# Configuração do servidor Streamlit para uso pessoal.
+
+[server]
+headless = true
+# Teto absoluto por arquivo (MB). O limite efetivo por imagem é configurável
+# em IGT_MAX_UPLOAD_MB ou na página Configurações (até este valor).
+maxUploadSize = 50
+enableXsrfProtection = true
+runOnSave = false
+
+[browser]
+# Não enviar estatísticas de uso ao Streamlit.
+gatherUsageStats = false
+
+[client]
+# O navegador mostra apenas mensagens genéricas de erro; detalhes vão só para o terminal.
+showErrorDetails = "none"
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#1d5c8c"
