@@ -141,6 +141,11 @@ with tab_high:
             "Nomes curtos (até 15 caracteres) aparecem inteiros. Capas com uma cor da sua paleta ou "
             "fotos simples deixam o perfil mais limpo. Os primeiros destaques são os mais vistos."
         )
+        a, b = st.columns(2)
+        with a:
+            copyable("\n".join(h.name_pt for h in suggestions), "Nomes em português, na ordem")
+        with b:
+            copyable("\n".join(h.name_en for h in suggestions), "Nomes em inglês, na ordem")
     for note in ps.review_existing_highlights(profile.get("highlights")):
         st.markdown(f"- {note}")
 
@@ -164,12 +169,16 @@ with tab_caps:
     st.caption("Use poucas hashtags e só quando forem específicas do conteúdo.")
 
     st.markdown("#### Ideias de publicações e vídeos curtos")
-    for cat, fmt, text in ps.content_ideas(category_weights):
+    ideas = ps.content_ideas(category_weights)
+    for cat, fmt, text in ideas:
         st.markdown(f"- **{fmt}** · {text} _({cat})_")
+    if ideas:
+        with st.expander("Copiar ideias"):
+            copyable("\n".join(f"{fmt}: {text}" for _, fmt, text in ideas))
 
     st.markdown("#### Chamadas para ação discretas")
-    lang_ctas = ps.CTAS[language]
-    st.markdown("\n".join(f"- {c}" for group in lang_ctas.values() for c in group))
+    for cta in (c for group in ps.CTAS[language].values() for c in group):
+        copyable(cta)
 
 with tab_diag:
     df = growth.metrics_dataframe(metrics_log.list_metrics(db))

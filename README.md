@@ -40,7 +40,7 @@ follow-back e planejar metas de seguidores.
 |---|---|
 | **Dashboard** | Seguidores atuais, meta, ganho líquido, crescimento %, posts, alcance, visualizações, visitas e engajamento (quando informados). Gráfico de evolução, tabelas semanal e mensal, registro manual, importação/exportação CSV e **simulador de metas** com cenários conservador/intermediário/otimista e plano de ritmo necessário (ex.: 69 → 1.000 ou 3.000). |
 | **Minhas fotos** | Upload múltiplo (JPG, JPEG, PNG, WEBP), validação, análise de brilho, contraste, nitidez, áreas estouradas, cor, resolução e composição; pontuação técnica 0–100 explicada; observações sobre luz e enquadramento; nota manual, comentários, tags, categorias, favorita e exclusão. |
-| **Organizador do feed** | Seleção das fotos, sugestão automática de ordem, prévia da grade 3×N, mover/fixar/retirar fotos, detecção de fotos quase iguais e de repetição de luz/tema, sugestões de alternância, versões salvas, comparação lado a lado e exportação (CSV, PNG da grade e ZIP com fotos numeradas **na ordem de publicação**). |
+| **Organizador do feed** | Seleção das fotos, sugestão automática de ordem, prévia da grade 3×N, mover/fixar/retirar fotos (fotos fixadas mantêm a posição quando outras saem), detecção de fotos quase iguais e de repetição de luz/tema, sugestões de alternância, versões salvas, comparação lado a lado e exportação (CSV, PNG da grade e ZIP com fotos numeradas **na ordem de publicação**). |
 | **Minhas referências** | Upload de imagens que você admira, paleta de cores, categorias, enquadramento, iluminação (com sugestão automática), contexto, estilo de roupa, nota 1–5, Gosto/Neutro/Não gosto e notas. Aba “O que aprendi” com preferências explicadas e comparação com as suas fotos. |
 | **Meu perfil** | Dados do perfil, quatro estilos de bio (curta, minimalista, esportes/lifestyle, viagens/internacional) em PT e EN, comparação com a bio atual por checklist, destaques sugeridos e ordenados, legendas por tema, ideias de posts/Reels, chamadas discretas e diagnóstico explicado. |
 | **Perfis de interesse** | Lista manual (usuário ou URL), categoria, motivo, origem, prioridade, status, tags e notas; pesquisa, filtros, ordenação, edição, arquivamento, exclusão e exportação CSV. |
@@ -134,14 +134,15 @@ Use apenas em redes confiáveis: a conexão local não é criptografada (HTTP).
 ## Configuração (variáveis de ambiente)
 
 Copie `.env.example` para `.env` (o `.env` nunca vai para o Git) ou exporte no terminal.
-Todas são opcionais.
+Todas são opcionais. No `.env`, coloque entre aspas qualquer valor que contenha `#` (por
+exemplo uma senha): sem aspas, ` #` inicia um comentário, como no padrão dotenv.
 
 | Variável | Padrão | Função |
 |---|---|---|
 | `IGT_DATA_DIR` | `./data` | Pasta do banco SQLite e das imagens privadas. |
 | `IGT_MAX_UPLOAD_MB` | `15` | Tamanho máximo por imagem (teto 50; também ajustável em Configurações). |
 | `IGT_APP_PASSWORD` | vazio | Exige senha para abrir a interface. Recomendado se a porta for exposta. |
-| `IGT_TIMEZONE` | `America/Sao_Paulo` | Fuso usado nas datas padrão (servidores remotos costumam usar UTC). |
+| `IGT_TIMEZONE` | `America/Sao_Paulo` | Fuso usado nas datas padrão (servidores remotos costumam usar UTC). Um nome inválido gera um aviso no log e volta ao padrão. |
 | `IGT_LOG_LEVEL` | `INFO` | Nível de log. Logs nunca contêm imagens, senhas ou conteúdo privado. |
 
 ## Backup, exportação e exclusão de dados
@@ -321,8 +322,9 @@ formulários, confirmações de exclusão e a senha de acesso.
   automático simples.
 - A nitidez pode ser superestimada em fotos com muito ruído (grão) e a composição é uma aproximação.
 - Formatos HEIC/HEIF (comuns em iPhone) e GIF não são aceitos; converta para JPG antes.
-- Ao registrar métricas de uma data que já existe, campos vazios mantêm o valor salvo; para
-  apagar um valor, exclua o registro da data e registre de novo.
+- Ao registrar métricas de uma data que já existe, campos vazios (inclusive “Seguidores”) mantêm
+  o valor salvo — dá para completar só o alcance de um dia passado. Para uma data nova, os
+  seguidores são obrigatórios. Para apagar um valor, exclua o registro da data e registre de novo.
 - A importação CSV recusa datas futuras e números acima de 10¹²; linhas com erro são listadas
   com o número da linha e não impedem a importação das demais.
 - As sugestões de texto usam modelos prontos (sem IA generativa); revise-as e personalize.

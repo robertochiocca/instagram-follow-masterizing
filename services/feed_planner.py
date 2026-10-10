@@ -205,6 +205,23 @@ def plan_feed(
     return FeedPlan(sequence=sequence, reasons=reasons)
 
 
+def apply_pins(sequence: list[int], pins: dict[int, int]) -> tuple[list[int], dict[int, int]]:
+    """Recoloca cada foto fixada na sua posição; as demais ocupam as vagas na ordem atual.
+
+    `pins` = {id da foto: posição}. Fixações de fotos fora da sequência ou em posições
+    além do tamanho dela são descartadas (e não aparecem no dicionário devolvido).
+    """
+    n = len(sequence)
+    slots: list[int | None] = [None] * n
+    kept: dict[int, int] = {}
+    for pid, pos in sorted(pins.items(), key=lambda kv: kv[1]):
+        if pid in sequence and 0 <= pos < n and slots[pos] is None:
+            slots[pos] = pid
+            kept[pid] = pos
+    rest = iter(pid for pid in sequence if pid not in kept)
+    return [pid if pid is not None else next(rest) for pid in slots], kept
+
+
 def _explain(p: FeedPhoto, neigh: list[FeedPhoto], centroid) -> list[str]:
     out = []
     if p.quality >= 0.75:

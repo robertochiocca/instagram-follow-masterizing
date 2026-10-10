@@ -187,6 +187,8 @@ with tab_routine:
     if st.button("Gerar prévia da rotina", icon=":material/auto_awesome:"):
         st.session_state["schedule_preview"] = cp.generate_schedule(start, int(weeks), freq, themes)
     preview = st.session_state.get("schedule_preview")
+    if preview == []:
+        st.info("Nenhum item gerado: aumente a frequência ou escolha dias disponíveis para publicar.")
     if preview:
         st.dataframe(
             pd.DataFrame([

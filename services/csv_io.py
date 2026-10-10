@@ -119,15 +119,31 @@ def decode_csv(data: bytes) -> str:
     return text
 
 
+def _detect_delimiter(header_line: str) -> str:
+    """Escolhe o separador interpretando o cabeçalho (vírgulas entre aspas não contam).
+
+    Prefere o separador que revela as colunas obrigatórias; senão, o que gera mais colunas.
+    """
+    aliases = _alias_map()
+    best, best_fields = None, 1
+    for delimiter in (";", ",", "\t"):
+        fields = next(csv.reader([header_line], delimiter=delimiter), [])
+        names = {aliases.get(_norm_header(f)) for f in fields}
+        if set(REQUIRED_METRIC_COLUMNS) <= names:
+            return delimiter
+        if len(fields) > best_fields:
+            best, best_fields = delimiter, len(fields)
+    if best is None:
+        raise ValueError("Não foi possível identificar o separador. Use vírgula ou ponto e vírgula.")
+    return best
+
+
 def read_csv_rows(data: bytes) -> tuple[list[str], list[tuple[int, list[str]]]]:
     """Cabeçalho e linhas (com o número da linha física onde cada registro começa)."""
     text = decode_csv(data)
-    first_line = text.lstrip("\n").split("\n", 1)[0]
-    counts = {sep: first_line.count(sep) for sep in (";", ",", "\t")}
-    delimiter = max(counts, key=counts.get)
-    if counts[delimiter] == 0:
-        raise ValueError("Não foi possível identificar o separador. Use vírgula ou ponto e vírgula.")
-    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+    delimiter = _detect_delimiter(text.lstrip("\n").split("\n", 1)[0])
+    # strict=True: uma aspa sem fechamento gera erro em vez de engolir o resto do arquivo.
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter, strict=True)
     rows: list[tuple[int, list[str]]] = []
     header: list[str] | None = None
     try:
@@ -143,7 +159,10 @@ def read_csv_rows(data: bytes) -> tuple[list[str], list[tuple[int, list[str]]]]:
             if len(rows) > MAX_CSV_ROWS:
                 raise ValueError(f"O CSV tem mais de {MAX_CSV_ROWS} linhas.")
     except csv.Error as exc:
-        raise ValueError("Não foi possível ler o CSV. Verifique o separador e as aspas.") from exc
+        raise ValueError(
+            f"Não foi possível ler o CSV perto da linha {reader.line_num}. "
+            "Verifique o separador e se todas as aspas estão fechadas."
+        ) from exc
     if header is None:
         raise ValueError("O arquivo CSV está vazio.")
     return header, rows

@@ -174,14 +174,13 @@ def generate_schedule(
     stories = int(frequency.get("stories", 0))
     items: list[dict[str, Any]] = []
     theme_index = 0
-    week_start = start - timedelta(days=start.weekday())
     for w in range(max(1, weeks)):
-        base = week_start + timedelta(weeks=w)
-        post_days = [base + timedelta(days=d) for d in weekdays]
+        # Cada bloco tem 7 dias contados a partir da data de início (não da segunda-feira),
+        # para que “N semanas” sejam sempre N semanas completas.
+        block = [start + timedelta(weeks=w, days=d) for d in range(7)]
+        post_days = [day for day in block if day.weekday() in weekdays]
         for i, ctype in enumerate(ordered):
             day = post_days[i % len(post_days)]
-            if day < start:
-                continue
             items.append({
                 "planned_date": day,
                 "content_type": ctype,
@@ -190,13 +189,10 @@ def generate_schedule(
                 "status": "planejado",
             })
             theme_index += 1
-        other_days = [base + timedelta(days=d) for d in range(7) if d not in weekdays] or post_days
+        other_days = [day for day in block if day.weekday() not in weekdays] or post_days
         for i in range(stories):
-            day = other_days[i % len(other_days)]
-            if day < start:
-                continue
             items.append({
-                "planned_date": day,
+                "planned_date": other_days[i % len(other_days)],
                 "content_type": "stories",
                 "theme": themes[(theme_index + i) % len(themes)],
                 "objective": DEFAULT_OBJECTIVE["stories"],

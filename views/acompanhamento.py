@@ -97,7 +97,7 @@ with st.expander("Filtros", icon=":material/filter_list:"):
                          ["Tudo", "Últimos 7 dias", "Últimos 30 dias", "Últimos 90 dias", "Personalizado"])
     start = end = None
     if period in ("Últimos 7 dias", "Últimos 30 dias", "Últimos 90 dias"):
-        start = day - timedelta(days=int(period.split()[1]))
+        start = day - timedelta(days=int(period.split()[1]) - 1)  # “últimos 7 dias” = hoje + 6 anteriores
     elif period == "Personalizado":
         a, b = st.columns(2)
         start = a.date_input("De", value=day - timedelta(days=30), format="DD/MM/YYYY")

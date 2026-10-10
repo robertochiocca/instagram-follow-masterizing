@@ -76,7 +76,7 @@ def test_pages_render_with_data(seeded, path):
 
 def test_dashboard_registers_metric(app_data_dir):
     at = run("views/dashboard.py")
-    followers = next(n for n in at.number_input if n.label == "Seguidores *")
+    followers = next(n for n in at.number_input if n.label == "Seguidores")
     followers.set_value(80)
     button(at, "Salvar registro").click()
     at.run()
@@ -159,7 +159,7 @@ def test_feed_generate_move_and_save(seeded):
     assert at.session_state["feed_draft"]["sequence"][:2] == [second, first]
     at.button(key="p_0").click()
     at.run()
-    assert at.session_state["feed_draft"]["pinned"] == [second]
+    assert at.session_state["feed_draft"]["pins"] == {second: 0}
     button(at, "Salvar como nova versão").click()
     at.run()
     assert_ok(at)

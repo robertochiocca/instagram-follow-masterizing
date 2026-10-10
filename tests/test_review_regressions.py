@@ -275,13 +275,13 @@ def test_pins_beyond_the_grid_size_are_released(feed_app):
     last = at.session_state["feed_draft"]["sequence"][-1]
     at.button(key="p_3").click()  # fixa a última (posição 4)
     at.run()
-    assert at.session_state["feed_draft"]["pinned"] == [last]
+    assert at.session_state["feed_draft"]["pins"] == {last: 3}
     at.number_input(key="feed_slots").set_value(2)
     at.run()
     _button(at, "Gerar nova sugestão (mantém as fixadas)").click()
     at.run()
     assert not at.exception
-    assert at.session_state["feed_draft"]["pinned"] == []
+    assert at.session_state["feed_draft"]["pins"] == {}
     assert len(at.session_state["feed_draft"]["sequence"]) == 2
 
 
@@ -296,3 +296,188 @@ def test_restore_defaults_resets_the_sliders(app_data_dir):
     assert next(s for s in at.slider if s.label == "Exposição (brilho)").value == 20
     db = Database(app_data_dir / "growth_tool.sqlite3")
     assert get_setting(db, "score_weights")["exposure"] == 20
+
+
+# --- Segunda rodada da revisão ------------------------------------------------------------------------
+
+
+def test_completing_a_past_date_keeps_its_followers(app_data_dir):
+    db = Database(app_data_dir / "growth_tool.sqlite3")
+    db.initialize()
+    week_ago = TODAY - timedelta(days=7)
+    metrics_log.upsert_metric(db, {"date": week_ago, "followers": 69})
+    metrics_log.upsert_metric(db, {"date": TODAY, "followers": 74})
+    at = _run("views/dashboard.py")
+    assert next(n for n in at.number_input if n.label == "Seguidores").value is None
+    at.date_input[0].set_value(week_ago)
+    next(n for n in at.number_input if n.label == "Contas alcançadas").set_value(350)
+    _button(at, "Salvar registro").click()
+    at.run()
+    assert not at.exception
+    rows = {r["date"]: r for r in metrics_log.list_metrics(db)}
+    assert (rows[week_ago.isoformat()]["followers"], rows[week_ago.isoformat()]["reach"]) == (69, 350)
+
+
+def test_new_date_requires_followers(db):
+    with pytest.raises(ValueError, match="seguidores"):
+        metrics_log.upsert_metric(db, {"date": TODAY, "reach": 100})
+
+
+@pytest.mark.parametrize("weekday_offset", range(7))
+def test_schedule_always_covers_full_weeks(weekday_offset):
+    freq = {"reels": 2, "carrossel": 1, "foto": 0, "stories": 3, "weekdays": ["Ter", "Qui", "Sáb"]}
+    start = pd.Timestamp("2026-10-12").date() + timedelta(days=weekday_offset)  # seg a dom
+    items = cp.generate_schedule(start, 4, freq, ["A"])
+    assert len(items) == 4 * (3 + 3)
+    assert min(i["planned_date"] for i in items) >= start
+    assert max(i["planned_date"] for i in items) < start + timedelta(weeks=4)
+    assert all(i["planned_date"].weekday() in {1, 3, 5} for i in items if i["content_type"] != "stories")
+
+
+def test_unbalanced_quote_is_rejected_instead_of_swallowing_rows(db):
+    data = 'data;seguidores;observacoes\n01/10/2026;69;ok\n02/10/2026;70;"Viagem\n03/10/2026;72;x\n'.encode()
+    with pytest.raises(ValueError, match="aspas"):
+        csv_io.import_metrics_csv(db, data)
+    assert metrics_log.list_metrics(db) == []
+
+
+def test_delimiter_detection_ignores_commas_inside_quoted_headers(db):
+    data = b'data;seguidores;"obs, notas, livres, extra"\n01/10/2026;69;a, b\n'
+    report = csv_io.import_metrics_csv(db, data)
+    assert report.inserted == 1 and not report.errors
+
+
+def test_dotenv_quoted_value_with_comment(tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.delenv("IGT_Q", raising=False)
+    monkeypatch.delenv("IGT_H", raising=False)
+    env = tmp_path / ".env"
+    env.write_text('IGT_Q="minha senha" # trocar depois\nIGT_H="Casa #42 forte"\n', encoding="utf-8")
+    config._load_dotenv(env)
+    assert os.environ["IGT_Q"] == "minha senha"
+    assert os.environ["IGT_H"] == "Casa #42 forte"
+
+
+def test_invalid_timezone_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("IGT_TIMEZONE", "America/Sao Paulo")
+    assert str(config.now().tzinfo) == config.DEFAULT_TIMEZONE
+
+
+def test_concurrent_first_initialization(tmp_path):
+    import threading
+
+    path = tmp_path / "novo.sqlite3"
+    errors, barrier = [], threading.Barrier(4)
+
+    def init():
+        try:
+            barrier.wait()
+            Database(path).initialize()
+        except Exception as exc:  # pragma: no cover - só em caso de falha
+            errors.append(exc)
+
+    threads = [threading.Thread(target=init) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(images_repo.list_categories(Database(path))) == 8
+
+
+def test_deleted_default_category_does_not_come_back(db):
+    first = images_repo.list_categories(db)[0]
+    images_repo.delete_category(db, first["id"])
+    db.initialize()
+    assert first["name"] not in {c["name"] for c in images_repo.list_categories(db)}
+
+
+def test_deleting_all_photos_removes_empty_feed_versions(db, storage):
+    ids = [photo_library.import_image(db, storage, encode(scene(seed=i)), f"{i}.jpg", "own", 5 * MB).image_id
+           for i in range(2)]
+    feeds_repo.save_version(db, "só a primeira", [{"image_id": ids[0]}])
+    feeds_repo.save_version(db, "as duas", [{"image_id": i} for i in ids])
+    photo_library.delete_image(db, storage, ids[0])
+    assert [v["name"] for v in feeds_repo.list_versions(db)] == ["as duas"]
+    photo_library.delete_all_images(db, storage, "own")
+    assert feeds_repo.list_versions(db) == []
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("instagram.com/_u/fulano", "fulano"), ("https://www.instagram.com/_u/fulano/", "fulano")],
+)
+def test_app_deep_links_resolve_to_the_profile(raw, expected):
+    from services.handles import normalize_username
+
+    assert normalize_username(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [".", "..", "a..b", "abc."])
+def test_dot_only_or_invalid_dot_usernames_are_rejected(raw):
+    from services.handles import normalize_username
+
+    with pytest.raises(ValueError):
+        normalize_username(raw)
+
+
+def test_follow_exactly_seven_days_old_is_not_stale(db):
+    from services import follows
+
+    follows.add_follow(db, {"username": "sete", "followed_at": TODAY - timedelta(days=7)})
+    follows.add_follow(db, {"username": "oito", "followed_at": TODAY - timedelta(days=8)})
+    stale = follows.summary(follows.list_follows(db), TODAY)["stale_pending"]
+    assert [r["username"] for r in stale] == ["oito"]
+
+
+def test_full_export_keeps_headers_and_integers(db, storage):
+    from services import data_management
+
+    metrics_log.upsert_metric(db, {"date": "2026-10-01", "followers": 69, "following": 180})
+    metrics_log.upsert_metric(db, {"date": "2026-10-02", "followers": 70})
+    with zipfile.ZipFile(io.BytesIO(data_management.export_all_zip(db, storage))) as zf:
+        metrics = zf.read("csv/metrics.csv").decode("utf-8-sig")
+        feed_items = zf.read("csv/feed_items.csv").decode("utf-8-sig")
+    assert '"180"' in metrics and "180,0" not in metrics
+    assert feed_items.strip() == '"version_id";"position";"image_id";"pinned"'
+    exported = csv_io.to_csv_bytes(metrics_log.export_dataframe(metrics_log.list_metrics(db))).decode("utf-8-sig")
+    assert "180,0" not in exported
+
+
+def test_apply_pins_keeps_fixed_positions():
+    seq, pins = fp.apply_pins([1, 2, 4, 5, 6], {3: 2})  # a foto 3 saiu; nenhuma fixada some
+    assert pins == {} and seq == [1, 2, 4, 5, 6]
+    seq, pins = fp.apply_pins([2, 3, 4, 5], {3: 2})  # a foto 1 saiu: a fixada 3 fica na posição 3
+    assert seq[2] == 3 and pins == {3: 2}
+    seq, pins = fp.apply_pins([2, 3], {3: 5})  # posição além do tamanho: fixação descartada
+    assert seq == [2, 3] and pins == {}
+
+
+def test_pinned_photo_stays_when_an_earlier_photo_is_removed(feed_app):
+    at = _run("views/organizador_feed.py")
+    _button(at, "Gerar sugestão").click()
+    at.run()
+    third = at.session_state["feed_draft"]["sequence"][2]
+    at.button(key="p_2").click()
+    at.run()
+    at.button(key="x_0").click()  # tira a primeira foto
+    at.run()
+    assert not at.exception
+    assert at.session_state["feed_draft"]["sequence"][2] == third
+    assert at.session_state["feed_draft"]["pins"] == {third: 2}
+    assert at.button(key="l_2").disabled and at.button(key="r_2").disabled
+
+
+def test_profile_ctas_and_highlights_are_copyable(app_data_dir):
+    from database.settings import save_profile
+
+    db = Database(app_data_dir / "growth_tool.sqlite3")
+    db.initialize()
+    save_profile(db, {"activities": "natação, futevôlei", "interests": "viagens"})
+    at = _run("views/meu_perfil.py")
+    codes = [c.value for c in at.code]
+    from services.profile_suggestions import CTAS
+
+    assert all(cta in codes for group in CTAS["pt"].values() for cta in group)
+    assert any("Natação" in c and "\n" in c for c in codes)  # lista de destaques para copiar

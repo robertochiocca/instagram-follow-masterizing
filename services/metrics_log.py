@@ -33,9 +33,9 @@ def _clean(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Informe a data.")
     out: dict[str, Any] = {"date": day.isoformat() if isinstance(day, date) else str(day)}
     followers = data.get("followers")
-    if followers is None or int(followers) < 0:
-        raise ValueError("Informe a quantidade de seguidores (número não negativo).")
-    out["followers"] = int(followers)
+    if followers is not None and int(followers) < 0:
+        raise ValueError("A quantidade de seguidores não pode ser negativa.")
+    out["followers"] = None if followers is None else int(followers)
     for col in OPTIONAL_COLUMNS:
         value = data.get(col)
         if value is None or value == "":
@@ -52,7 +52,9 @@ def upsert_metric(db: Database, data: dict[str, Any]) -> tuple[int, bool]:
     """Grava o registro do dia; se já existir um para a data, atualiza. Devolve (id, criado?).
 
     Na atualização, campos vazios (None) mantêm o valor já registrado: salvar só
-    os seguidores não apaga alcance, visualizações ou observações do mesmo dia.
+    os seguidores não apaga alcance, visualizações ou observações do mesmo dia, e
+    completar o alcance de um dia passado não altera os seguidores daquele dia.
+    Para uma data nova, os seguidores são obrigatórios.
     """
     record = _clean(data)
     record["source"] = "manual"
@@ -62,6 +64,8 @@ def upsert_metric(db: Database, data: dict[str, Any]) -> tuple[int, bool]:
             changes = {k: v for k, v in record.items() if v is not None}
             crud.update(conn, "metrics", existing["id"], changes)
             return existing["id"], False
+        if record["followers"] is None:
+            raise ValueError("Informe a quantidade de seguidores para registrar uma nova data.")
         return crud.insert(conn, "metrics", record), True
 
 
@@ -78,4 +82,6 @@ def delete_metric(db: Database, metric_id: int) -> bool:
 def export_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     cols = list(EXPORT_NAMES)
     df = pd.DataFrame(rows or [], columns=["id", *cols])[cols]
+    for col in METRIC_COLUMNS:  # contagens continuam inteiras mesmo com valores vazios
+        df[col] = df[col].astype("Int64")
     return df.rename(columns=EXPORT_NAMES)

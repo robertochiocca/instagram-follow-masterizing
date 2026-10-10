@@ -57,9 +57,11 @@ def _load_dotenv(path: Path) -> None:
         key, value = key.strip(), value.strip()
         if key.startswith("export "):
             key = key[len("export "):].strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
+        if value[:1] in ("'", '"') and value.find(value[0], 1) > 0:
+            value = value[1 : value.find(value[0], 1)]  # entre aspas: o resto da linha é ignorado
         elif " #" in value:
+            # Como no python-dotenv: sem aspas, “ #” inicia um comentário. Valores com
+            # “#” (ex.: senhas) devem ficar entre aspas.
             value = value.split(" #", 1)[0].rstrip()
         os.environ.setdefault(key, value)
 
@@ -95,10 +97,16 @@ def load_config() -> AppConfig:
 
 def _tz():
     name = os.environ.get("IGT_TIMEZONE", "").strip() or DEFAULT_TIMEZONE
-    try:
-        return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
-        return timezone.utc
+    for candidate in dict.fromkeys((name, DEFAULT_TIMEZONE)):
+        try:
+            zone = ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError):
+            logging.getLogger(__name__).warning(
+                "Fuso horário inválido em IGT_TIMEZONE; usando %s.", DEFAULT_TIMEZONE
+            )
+            continue
+        return zone
+    return timezone.utc  # sem base de fusos no sistema
 
 
 def now() -> datetime:

@@ -72,7 +72,7 @@ def load_version(version_id: int) -> None:
     images_repo.set_feed_pool(db, ids, True)
     st.session_state[DRAFT] = {
         "sequence": ids,
-        "pinned": [i["image_id"] for i in full["items"] if i["pinned"]],
+        "pins": {i["image_id"]: pos for pos, i in enumerate(full["items"]) if i["pinned"]},
         "reasons": {}, "version_id": version_id,
     }
     st.session_state[SLOTS] = max(2, len(ids))
@@ -196,11 +196,14 @@ with st.expander("2. Critérios do algoritmo", icon=":material/tune:"):
 
 draft = st.session_state.get(DRAFT)
 if draft:
+    if "pins" not in draft:  # rascunho de uma versão anterior da página
+        draft["pins"] = {pid: draft["sequence"].index(pid) for pid in draft.pop("pinned", [])
+                         if pid in draft["sequence"]}
     kept = [pid for pid in draft["sequence"] if pid in photos]
     if kept != draft["sequence"]:
+        # Uma foto saiu da seleção: as fixadas voltam às suas posições.
+        draft["sequence"], draft["pins"] = fp.apply_pins(kept, draft["pins"])
         draft["reasons"] = {}  # as explicações são por posição: deixam de valer
-    draft["sequence"] = kept
-    draft["pinned"] = [pid for pid in draft["pinned"] if pid in kept]
 
 st.subheader("3. Sequência")
 a, b = st.columns([1, 2], vertical_alignment="bottom")
@@ -211,12 +214,12 @@ st.session_state[SLOTS] = min(max_slots, max(2, int(st.session_state.get(SLOTS, 
 slots = a.number_input("Posições na grade", min_value=2, max_value=max_slots, step=1, key=SLOTS)
 if b.button("Gerar sugestão" if not draft else "Gerar nova sugestão (mantém as fixadas)",
             type="primary", icon=":material/auto_awesome:"):
-    pins = {draft["sequence"].index(pid): pid for pid in draft["pinned"]} if draft else {}
-    honoured = {pos: pid for pos, pid in pins.items() if pos < int(slots)}
+    pins = draft["pins"] if draft else {}
+    honoured = {pos: pid for pid, pos in pins.items() if pos < int(slots)}
     if len(honoured) < len(pins):
         flash(f"{len(pins) - len(honoured)} foto(s) fixada(s) além da posição {int(slots)} foram soltas.", "warning")
     plan = fp.plan_feed(list(photos.values()), int(slots), honoured, weights)
-    st.session_state[DRAFT] = {"sequence": plan.sequence, "pinned": list(honoured.values()),
+    st.session_state[DRAFT] = {"sequence": plan.sequence, "pins": {pid: pos for pos, pid in honoured.items()},
                                "reasons": plan.reasons, "version_id": draft.get("version_id") if draft else None}
     st.rerun()
 
@@ -224,40 +227,53 @@ if not draft:
     st.info("Toque em “Gerar sugestão” para montar a primeira sequência ou carregue uma versão salva abaixo.")
 else:
     seq = draft["sequence"]
+    pins = draft["pins"]  # {id da foto: posição fixa}
 
+    # Os callbacks leem o rascunho do session_state no momento do toque.
     def move(index: int, delta: int) -> None:
-        j = index + delta
-        if 0 <= j < len(seq):
-            seq[index], seq[j] = seq[j], seq[index]
-            draft["reasons"] = {}
+        d = st.session_state[DRAFT]
+        order, j = d["sequence"], index + delta
+        if 0 <= j < len(order) and order[index] not in d["pins"] and order[j] not in d["pins"]:
+            order[index], order[j] = order[j], order[index]
+            d["reasons"] = {}
 
-    def toggle_pin(pid: int) -> None:
-        draft["pinned"] = [p for p in draft["pinned"] if p != pid] if pid in draft["pinned"] else draft["pinned"] + [pid]
+    def toggle_pin(index: int, pid: int) -> None:
+        d = st.session_state[DRAFT]
+        if d["pins"].pop(pid, None) is None:
+            d["pins"][pid] = index
 
     def remove(index: int) -> None:
-        pid = seq.pop(index)
-        draft["pinned"] = [p for p in draft["pinned"] if p != pid]
-        draft["reasons"] = {}
+        d = st.session_state[DRAFT]
+        pid = d["sequence"].pop(index)
+        d["pins"].pop(pid, None)
+        # As demais fotos fixadas continuam nas suas posições.
+        d["sequence"], d["pins"] = fp.apply_pins(d["sequence"], d["pins"])
+        d["reasons"] = {}
 
     # A grade é desenhada como uma imagem única: mantém as 3 colunas em qualquer tela.
-    pinned_now = {i for i, pid in enumerate(seq) if pid in draft["pinned"]}
+    pinned_now = set(pins.values())
     st.image(fp.grid_preview_png(storage, [by_id[pid] for pid in seq], cell=240, pinned_positions=pinned_now),
              width="stretch")
     st.caption("Marcador amarelo = posição fixada. Toque no número para mover, fixar ou retirar a foto.")
     with st.container(horizontal=True, gap="small"):
         for pos, pid in enumerate(seq):
-            pinned = pid in draft["pinned"]
+            pinned = pid in pins
             with st.popover(f"{pos + 1}{' 📌' if pinned else ''}"):
                 data = tile_bytes(by_id[pid])
                 if data:
                     st.image(data, width=120)
                 st.caption(f"{by_id[pid].get('original_name') or ''} · {by_id[pid]['technical_score']:.0f}/100")
+                locked_help = "Posições fixadas não se movem: solte a fixação antes."
+                before_locked = pinned or (pos > 0 and seq[pos - 1] in pins)
+                after_locked = pinned or (pos < len(seq) - 1 and seq[pos + 1] in pins)
                 st.button("◀ Mover para antes", key=f"l_{pos}", on_click=move, args=(pos, -1),
-                          disabled=pos == 0, width="stretch")
+                          disabled=pos == 0 or before_locked, width="stretch",
+                          help=locked_help if before_locked else None)
                 st.button("Mover para depois ▶", key=f"r_{pos}", on_click=move, args=(pos, 1),
-                          disabled=pos == len(seq) - 1, width="stretch")
+                          disabled=pos == len(seq) - 1 or after_locked, width="stretch",
+                          help=locked_help if after_locked else None)
                 st.button("Soltar posição" if pinned else "📌 Fixar nesta posição", key=f"p_{pos}",
-                          on_click=toggle_pin, args=(pid,), width="stretch")
+                          on_click=toggle_pin, args=(pos, pid), width="stretch")
                 st.button("✕ Tirar da sequência", key=f"x_{pos}", on_click=remove, args=(pos,),
                           width="stretch")
 
@@ -298,8 +314,8 @@ else:
 
     # --- Salvar e exportar ---
     rows = [by_id[pid] for pid in seq]
-    pinned_positions = {seq.index(p) for p in draft["pinned"]}
-    items = [{"image_id": pid, "pinned": pid in draft["pinned"]} for pid in seq]
+    pinned_positions = set(pins.values())
+    items = [{"image_id": pid, "pinned": pid in pins} for pid in seq]
     with st.container(border=True):
         a, b = st.columns([2, 1], vertical_alignment="bottom")
         name = a.text_input("Nome da versão", value=f"Versão {len(feeds_repo.list_versions(db)) + 1}", max_chars=80)
@@ -325,7 +341,7 @@ else:
     b.download_button("Prévia da grade (PNG)", fp.grid_preview_png(storage, rows), "previa_grade.png",
                       "image/png", icon=":material/image:", width="stretch")
     # O ZIP preparado só vale para a sequência exata em que foi gerado.
-    fingerprint = (tuple(seq), tuple(sorted(draft["pinned"])))
+    fingerprint = (tuple(seq), tuple(sorted(pins.items())))
     prepared = st.session_state.get(ZIP)
     if prepared and prepared["fingerprint"] != fingerprint:
         st.session_state.pop(ZIP, None)

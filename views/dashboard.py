@@ -145,7 +145,11 @@ with tab_form:
     with st.form("metric_form", clear_on_submit=False):
         a, b = st.columns(2)
         m_date = a.date_input("Data", value=day, max_value=day, format="DD/MM/YYYY")
-        m_followers = b.number_input("Seguidores *", min_value=0, value=default_followers, step=1)
+        m_followers = b.number_input(
+            "Seguidores", min_value=0, value=None, step=1, placeholder=f"último: {default_followers}",
+            help="Obrigatório para uma data nova. Para completar uma data já registrada, deixe vazio "
+                 "para manter os seguidores salvos daquela data.",
+        )
         a, b, c = st.columns(3)
         m_following = a.number_input("Seguindo", min_value=0, value=None, step=1)
         m_posts = b.number_input("Publicações (total)", min_value=0, value=None, step=1)

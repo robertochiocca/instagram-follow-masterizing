@@ -52,22 +52,32 @@ def _table_rows(conn, table: str) -> list[dict[str, Any]]:
     return [crud.decode_row(table, r) for r in conn.execute(f"SELECT * FROM {table}")]
 
 
+def _integer_columns(conn, table: str) -> list[str]:
+    return [row[1] for row in conn.execute(f"PRAGMA table_info({table})") if "INT" in (row[2] or "").upper()]
+
+
 def export_all_zip(db: Database, storage: ImageStorage, include_images: bool = True) -> bytes:
     """ZIP com JSON completo, um CSV por tabela e (opcionalmente) as imagens."""
     buf = io.BytesIO()
     with db.connect() as conn:
         tables = {t: _table_rows(conn, t) for t in EXPORT_TABLES}
+        columns = {t: crud.table_columns(conn, t) for t in EXPORT_TABLES}
+        integer_columns = {t: _integer_columns(conn, t) for t in EXPORT_TABLES}
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(
             "dados.json",
             json.dumps({"exportado_em": now_iso(), "tabelas": tables}, ensure_ascii=False, indent=2),
         )
         for table, rows in tables.items():
-            df = pd.DataFrame(rows)
+            df = pd.DataFrame(rows, columns=columns[table])  # tabelas vazias mantêm o cabeçalho
             for col in df.columns:
-                df[col] = df[col].map(
-                    lambda v: json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else v
-                )
+                if col in integer_columns[table]:
+                    # Inteiros com valores vazios continuam inteiros (sem virar “180,0”).
+                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+                else:
+                    df[col] = df[col].map(
+                        lambda v: json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else v
+                    )
             zf.writestr(f"csv/{table}.csv", to_csv_bytes(df))
         if include_images:
             for row in tables["images"]:

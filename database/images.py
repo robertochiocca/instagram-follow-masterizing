@@ -121,6 +121,7 @@ def delete_image_row(db: Database, image_id: int) -> dict[str, Any] | None:
         row = crud.get(conn, "images", image_id)
         if row:
             crud.delete(conn, "images", image_id)
+            _drop_empty_feed_versions(conn)
     return row
 
 
@@ -128,7 +129,13 @@ def delete_rows_by_kind(db: Database, kind: str) -> list[dict[str, Any]]:
     with db.connect() as conn:
         rows = crud.select(conn, "images", {"kind": kind})
         conn.execute("DELETE FROM images WHERE kind = ?", (kind,))
+        _drop_empty_feed_versions(conn)
     return rows
+
+
+def _drop_empty_feed_versions(conn: sqlite3.Connection) -> None:
+    """Versões de feed sem nenhuma foto (todas apagadas) não têm mais utilidade."""
+    conn.execute("DELETE FROM feed_versions WHERE id NOT IN (SELECT DISTINCT version_id FROM feed_items)")
 
 
 def count_images(db: Database, kind: str) -> int:
