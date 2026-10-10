@@ -173,7 +173,7 @@ with tab_caps:
 
 with tab_diag:
     df = growth.metrics_dataframe(metrics_log.list_metrics(db))
-    rate = growth.average_daily_gain(df, window_days=30) if len(df) >= 2 else None
+    rate = growth.average_daily_gain(df, window_days=30, today=today()) if len(df) >= 2 else None
     recent = content_planner.published_since(db, today() - timedelta(days=14))
     has_plan = bool(content_planner.list_items(db))
     icons = {"acao": "🔴", "dica": "🟡", "ok": "🟢"}

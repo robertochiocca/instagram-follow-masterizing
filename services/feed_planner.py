@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw, ImageOps
 from models.defaults import DEFAULT_FEED_WEIGHTS
 from models.vocab import CONTEXT, FRAMING, LIGHTING
 from services import image_analysis
+from services.csv_io import to_csv_bytes
 from services.image_storage import ImageStorage
 from services.photo_library import metrics_of
 from services.preferences import feature_phrase
@@ -41,6 +42,8 @@ ADJACENT_SIMILARITY_ALERT = 0.6
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    if x != x:  # NaN nunca vira nota máxima
+        return lo
     return max(lo, min(hi, x))
 
 
@@ -424,7 +427,7 @@ def export_zip(storage: ImageStorage, rows: list[dict], pinned_positions: set[in
                 zf.write(path, f"publicar_{publish_order:02d}_grade_{pos + 1:02d}.{ext}")
         zf.writestr(
             "sequencia.csv",
-            sequence_dataframe(rows, pinned_positions).to_csv(index=False).encode("utf-8-sig"),
+            to_csv_bytes(sequence_dataframe(rows, pinned_positions)),
         )
         zf.writestr("previa_grade.png", grid_preview_png(storage, rows))
         zf.writestr(

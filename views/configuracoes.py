@@ -11,7 +11,16 @@ from models.defaults import DEFAULT_PREFERENCE_GROUP_WEIGHTS, DEFAULT_SCORE_WEIG
 from services import data_management, photo_library
 from services.image_analysis import SCORE_LABELS
 from services.preferences import GROUP_LABELS
-from ui.components import confirm_button, done, fmt_bytes, metric_grid, page_header, typed_confirmation
+from ui.components import (
+    confirm_button,
+    done,
+    fmt_bytes,
+    form_key,
+    metric_grid,
+    page_header,
+    reset_form,
+    typed_confirmation,
+)
 from ui.state import get_config, get_db, get_storage, max_upload_mb
 
 db = get_db()
@@ -48,7 +57,7 @@ with tab_cat:
                               "A categoria será removida das imagens classificadas com ela (as imagens continuam)."):
                 images_repo.delete_category(db, cat["id"])
                 done("Categoria removida.")
-    with st.form("new_category", clear_on_submit=True):
+    with st.form(form_key("new_category")):
         st.markdown("**Nova categoria**")
         name = st.text_input("Nome", max_chars=60)
         desc = st.text_input("Descrição (opcional)", max_chars=200)
@@ -59,6 +68,7 @@ with tab_cat:
             except ValueError as exc:
                 st.error(str(exc))
             else:
+                reset_form("new_category")
                 done("Categoria criada.")
 
 # --- Listas editáveis -------------------------------------------------------------------------------
@@ -89,7 +99,7 @@ with tab_weights:
     st.markdown("#### Pontuação técnica das fotos")
     st.caption("Pesos relativos (são normalizados para somar 100%). Ao salvar, todas as fotos são reavaliadas.")
     current = get_setting(db, "score_weights")
-    with st.form("score_weights"):
+    with st.form(form_key("score_weights")):
         new_weights = {
             key: st.slider(label, 0, 50, int(current.get(key, DEFAULT_SCORE_WEIGHTS[key])), 1)
             for key, label in SCORE_LABELS.items()
@@ -103,6 +113,7 @@ with tab_weights:
         else:
             if restore:
                 reset_setting(db, "score_weights")
+                reset_form("score_weights")  # recria os controles com os valores padrão
             else:
                 set_setting(db, "score_weights", new_weights)
             total = photo_library.rescore_all(db, get_setting(db, "score_weights"))
@@ -111,7 +122,7 @@ with tab_weights:
     st.markdown("#### Aprendizado de preferências")
     st.caption("Quanto cada grupo de características influencia a afinidade com suas referências.")
     current = get_setting(db, "preference_group_weights")
-    with st.form("pref_weights"):
+    with st.form(form_key("pref_weights")):
         new_pref = {
             key: st.slider(GROUP_LABELS[key], 0.0, 2.0, float(current.get(key, default)), 0.1)
             for key, default in DEFAULT_PREFERENCE_GROUP_WEIGHTS.items()
@@ -124,6 +135,7 @@ with tab_weights:
         done("Pesos de preferência salvos.")
     if restore:
         reset_setting(db, "preference_group_weights")
+        reset_form("pref_weights")
         done("Pesos de preferência restaurados.")
 
 # --- Geral ------------------------------------------------------------------------------------------

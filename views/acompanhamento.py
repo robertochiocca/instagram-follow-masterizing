@@ -19,9 +19,11 @@ from ui.components import (
     empty_state,
     fmt_date,
     fmt_num,
+    form_key,
     metric_grid,
     page_header,
     paginate,
+    reset_form,
 )
 from ui.state import get_db
 
@@ -40,7 +42,7 @@ STATUS_COLORS = {"pendente": "orange", "seguiu_de_volta": "green", "nao_seguiu_d
 
 with st.expander("Registrar perfil que segui", icon=":material/person_add:",
                  expanded=not follows.list_follows(db, include_archived=True)):
-    with st.form("add_follow", clear_on_submit=True):
+    with st.form(form_key("add_follow")):
         a, b = st.columns(2)
         username = a.text_input("Nome de usuário ou URL *", placeholder="@usuario")
         url = b.text_input("URL informada (opcional)")
@@ -56,6 +58,7 @@ with st.expander("Registrar perfil que segui", icon=":material/person_add:",
             except ValueError as exc:
                 st.error(str(exc))
             else:
+                reset_form("add_follow")
                 done("Registro salvo.")
 
 everything = follows.list_follows(db, include_archived=True)

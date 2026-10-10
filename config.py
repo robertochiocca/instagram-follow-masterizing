@@ -43,19 +43,24 @@ class AppConfig:
 def _load_dotenv(path: Path) -> None:
     """Carrega um arquivo .env simples (CHAVE=valor) sem sobrescrever o ambiente.
 
-    Implementação mínima para evitar uma dependência extra; aceita comentários
-    e aspas simples ou duplas em volta do valor.
+    Implementação mínima para evitar uma dependência extra. Aceita: linhas de
+    comentário, prefixo “export ”, aspas simples ou duplas, comentário no fim de
+    valores sem aspas (“ # ...”) e arquivos salvos com BOM (Bloco de Notas).
     """
     if not path.is_file():
         return
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         key, value = key.strip(), value.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
             value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()
         os.environ.setdefault(key, value)
 
 

@@ -69,10 +69,12 @@ class ImageStorage:
             "PNG": {"optimize": True},
             "WEBP": {"quality": 90},
         }[validated.format]
+        clean = validated.image.copy()
+        clean.info = {}  # defesa extra: nenhum comentário, EXIF ou perfil herdado é regravado
         full_path = self.path(kind, filename)
-        self._atomic_save(validated.image, full_path, validated.format, **options)
+        self._atomic_save(clean, full_path, validated.format, **options)
         try:
-            thumb = validated.image.copy()
+            thumb = clean.copy()
             thumb.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.Resampling.LANCZOS)
             self._atomic_save(
                 thumb, self.thumb_path(kind, thumb_name), "JPEG", quality=82, optimize=True

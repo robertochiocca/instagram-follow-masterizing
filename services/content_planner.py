@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from config import today
 from database import crud
 from database.connection import Database
 from models.vocab import CONTENT_STATUS, CONTENT_TYPES, WEEKDAYS
@@ -74,10 +75,11 @@ def add_items(db: Database, items: list[dict[str, Any]]) -> int:
 
 def update_item(db: Database, item_id: int, data: dict[str, Any]) -> None:
     record = _clean(data, partial=True)
-    if record.get("status") == "publicado" and "published_date" not in record:
+    if record.get("status") == "publicado" and not record.get("published_date"):
         current = get_item(db, item_id)
         if current and not current.get("published_date"):
-            record["published_date"] = current["planned_date"]
+            # Publicado antes da data planejada: registra hoje, nunca uma data futura.
+            record["published_date"] = min(current["planned_date"], today().isoformat())
     with db.connect() as conn:
         crud.update(conn, "content_plan", item_id, record)
 

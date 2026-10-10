@@ -20,7 +20,7 @@ from services import follows, interests, metrics_log, photo_library
 from services.image_storage import ImageStorage
 
 ROOT = Path(__file__).resolve().parent.parent
-PAGES = sorted(f"pages/{p.name}" for p in (ROOT / "pages").glob("*.py"))
+PAGES = sorted(f"views/{p.name}" for p in (ROOT / "views").glob("*.py"))
 TIMEOUT = 60
 MB = 1024 * 1024
 
@@ -75,7 +75,7 @@ def test_pages_render_with_data(seeded, path):
 
 
 def test_dashboard_registers_metric(app_data_dir):
-    at = run("pages/dashboard.py")
+    at = run("views/dashboard.py")
     followers = next(n for n in at.number_input if n.label == "Seguidores *")
     followers.set_value(80)
     button(at, "Salvar registro").click()
@@ -87,7 +87,7 @@ def test_dashboard_registers_metric(app_data_dir):
 
 
 def test_interest_add_and_register_follow(app_data_dir):
-    at = run("pages/perfis_interesse.py")
+    at = run("views/perfis_interesse.py")
     next(t for t in at.text_input if t.label.startswith("Nome de usuário")).input("@Novo.Perfil")
     button(at, "Salvar").click()
     at.run()
@@ -101,7 +101,7 @@ def test_interest_add_and_register_follow(app_data_dir):
 
 
 def test_interest_invalid_username_shows_error(app_data_dir):
-    at = run("pages/perfis_interesse.py")
+    at = run("views/perfis_interesse.py")
     next(t for t in at.text_input if t.label.startswith("Nome de usuário")).input("nome com espaço")
     button(at, "Salvar").click()
     at.run()
@@ -111,7 +111,7 @@ def test_interest_invalid_username_shows_error(app_data_dir):
 
 def test_follow_mark_reviewed_and_delete(seeded):
     db, _, _ = seeded
-    at = run("pages/acompanhamento.py")
+    at = run("views/acompanhamento.py")
     button(at, "Marcar como revisado").click()
     at.run()
     assert_ok(at)
@@ -127,7 +127,7 @@ def test_follow_mark_reviewed_and_delete(seeded):
 def test_photo_detail_and_delete_with_confirmation(seeded):
     db, storage, ids = seeded
     target = ids[0]
-    at = run("pages/minhas_fotos.py", selected_image_own=target)
+    at = run("views/minhas_fotos.py", selected_image_own=target)
     assert_ok(at)
     assert any("Pontuação técnica" in m.label for m in at.metric)
     button(at, "Excluir esta foto").click()
@@ -142,12 +142,12 @@ def test_photo_detail_and_delete_with_confirmation(seeded):
 def test_reference_detail_view(seeded):
     db, _, _ = seeded
     ref_id = images_repo.list_images(db, "reference")[0]["id"]
-    assert_ok(run("pages/minhas_referencias.py", selected_image_reference=ref_id))
+    assert_ok(run("views/minhas_referencias.py", selected_image_reference=ref_id))
 
 
 def test_feed_generate_move_and_save(seeded):
     db, _, ids = seeded
-    at = run("pages/organizador_feed.py")
+    at = run("views/organizador_feed.py")
     button(at, "Gerar sugestão").click()
     at.run()
     assert_ok(at)
@@ -172,7 +172,7 @@ def test_feed_generate_move_and_save(seeded):
 
 
 def test_profile_save_and_suggestions(app_data_dir):
-    at = run("pages/meu_perfil.py")
+    at = run("views/meu_perfil.py")
     next(t for t in at.text_input if t.label == "Ocupação ou estudo").input("Estudante de Direito")
     next(t for t in at.text_input if t.label.startswith("Esportes")).input("natação, futevôlei")
     button(at, "Salvar perfil").click()
@@ -186,7 +186,7 @@ def test_profile_save_and_suggestions(app_data_dir):
 
 
 def test_content_routine_generation(app_data_dir):
-    at = run("pages/planejador_conteudo.py")
+    at = run("views/planejador_conteudo.py")
     button(at, "Gerar prévia da rotina").click()
     at.run()
     preview = at.session_state["schedule_preview"]
@@ -201,7 +201,7 @@ def test_content_routine_generation(app_data_dir):
 
 def test_settings_wipe_all_requires_typed_confirmation(seeded):
     db, storage, _ = seeded
-    at = run("pages/configuracoes.py")
+    at = run("views/configuracoes.py")
     go = button(at, "Apagar tudo definitivamente")
     assert go.disabled
     next(t for t in at.text_input if t.label.startswith("Para confirmar")).input("APAGAR")
@@ -229,3 +229,21 @@ def test_password_gate(app_data_dir, monkeypatch):
     at.run()
     assert_ok(at)
     assert any(t.value == "Dashboard" for t in at.title)
+
+
+@pytest.mark.parametrize("page", ["views/configuracoes.py", "views/dashboard.py", "views/minhas_fotos.py"])
+def test_password_gate_cannot_be_skipped_by_opening_a_page_directly(app_data_dir, monkeypatch, page):
+    # Regressão: com uma pasta "pages/" o Streamlit executava a página sem passar pelo app.py.
+    monkeypatch.setenv("IGT_APP_PASSWORD", "segredo-forte")
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=TIMEOUT)
+    at.switch_page(page)
+    at.run()
+    assert_ok(at)
+    assert any(t.label == "Senha de acesso" for t in at.text_input)
+    assert not any("exportação" in b.label.lower() for b in at.button)
+    assert not at.metric
+
+
+def test_no_streamlit_auto_pages_directory():
+    # Uma pasta "pages/" ao lado do app.py liga o modo multipágina legado do Streamlit.
+    assert not (ROOT / "pages").exists()

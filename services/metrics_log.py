@@ -49,13 +49,18 @@ def _clean(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def upsert_metric(db: Database, data: dict[str, Any]) -> tuple[int, bool]:
-    """Grava o registro do dia; se já existir um para a data, atualiza. Devolve (id, criado?)."""
+    """Grava o registro do dia; se já existir um para a data, atualiza. Devolve (id, criado?).
+
+    Na atualização, campos vazios (None) mantêm o valor já registrado: salvar só
+    os seguidores não apaga alcance, visualizações ou observações do mesmo dia.
+    """
     record = _clean(data)
     record["source"] = "manual"
     with db.connect() as conn:
         existing = conn.execute("SELECT id FROM metrics WHERE date = ?", (record["date"],)).fetchone()
         if existing:
-            crud.update(conn, "metrics", existing["id"], record)
+            changes = {k: v for k, v in record.items() if v is not None}
+            crud.update(conn, "metrics", existing["id"], changes)
             return existing["id"], False
         return crud.insert(conn, "metrics", record), True
 

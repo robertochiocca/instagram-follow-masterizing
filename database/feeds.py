@@ -51,7 +51,8 @@ def update_version(
     if name:
         data["name"] = name.strip()[:80]
     with db.connect() as conn:
-        crud.update(conn, "feed_versions", version_id, data)
+        if not crud.update(conn, "feed_versions", version_id, data):
+            raise ValueError("Essa versão não existe mais.")
         _write_items(conn, version_id, items)
 
 

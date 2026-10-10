@@ -41,10 +41,35 @@ def show_flash() -> None:
         st.toast(message, icon=icons.get(kind, "ℹ️"))
 
 
+EXPORT_KEYS = ("export_zip", "db_backup", "feed_zip")
+
+
+def forget_exports() -> None:
+    """Descarta exportações preparadas: depois de uma alteração elas estariam desatualizadas
+    (e poderiam conter fotos ou registros já apagados)."""
+    for key in EXPORT_KEYS:
+        st.session_state.pop(key, None)
+
+
 def done(message: str, kind: str = "success") -> None:
-    """Registra a mensagem e recarrega a página para refletir a mudança."""
+    """Registra a mensagem, descarta exportações antigas e recarrega a página."""
     flash(message, kind)
+    forget_exports()
     st.rerun()
+
+
+def form_key(base: str) -> str:
+    """Chave de formulário que só muda após um envio bem-sucedido.
+
+    Assim os campos são limpos quando o registro é salvo, mas o que foi digitado
+    continua na tela se a validação falhar (o que clear_on_submit não permite).
+    """
+    return f"{base}__{st.session_state.get(f'_form_nonce_{base}', 0)}"
+
+
+def reset_form(base: str) -> None:
+    nonce = f"_form_nonce_{base}"
+    st.session_state[nonce] = st.session_state.get(nonce, 0) + 1
 
 
 # --- Estados vazios e confirmações ------------------------------------------------

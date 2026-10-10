@@ -86,7 +86,8 @@ streamlit run app.py
 ```
 
 Abra **http://localhost:8501**. O banco e as imagens são criados automaticamente em
-`./data/` (pasta ignorada pelo Git).
+`./data/` (pasta ignorada pelo Git). Por padrão o servidor só aceita conexões do próprio
+computador (`address = "localhost"` em `.streamlit/config.toml`).
 
 Para encerrar, pressione `Ctrl+C` no terminal.
 
@@ -157,7 +158,8 @@ data/
 
 **Pela interface (Configurações → Dados e privacidade):**
 - **Exportação completa (ZIP):** `dados.json` com todas as tabelas, um CSV por tabela e, se
-  desejar, as imagens.
+  desejar, as imagens. Os CSVs usam `;`, vírgula decimal e campos entre aspas (padrão do Excel
+  em português); o Google Planilhas detecta o formato automaticamente.
 - **Backup do banco (.sqlite3):** cópia consistente feita com a API de backup do SQLite.
 - **Apagar todas as minhas fotos**, **apagar todas as referências** ou **apagar TODOS os dados**
   (exige digitar `APAGAR`). Cada página também permite excluir registros individuais, sempre com
@@ -263,18 +265,31 @@ Referências: [Instagram API with Instagram Login](https://developers.facebook.c
 
 - **Uploads validados** por extensão, tamanho e conteúdo real (Pillow), com rejeição de arquivos
   corrompidos, truncados, com extensão trocada ou com dimensões absurdas (proteção contra
-  “bombas de descompressão”).
-- **Cópia sanitizada:** as imagens são recodificadas sem metadados EXIF (inclusive GPS) e
-  salvas com nomes aleatórios (UUID). O nome original serve só para exibição.
+  “bombas de descompressão”). Só os decodificadores JPEG, PNG e WEBP do Pillow são usados: um
+  arquivo de outro tipo (por exemplo PostScript disfarçado de `.png`, que acionaria o
+  Ghostscript) é recusado sem ser decodificado. Fotos de câmera com imagem extra embutida (MPO)
+  são aceitas como JPEG.
+- **Cópia sanitizada:** as imagens são recodificadas sem nenhum metadado (EXIF com GPS, XMP,
+  comentários JPEG) e salvas com nomes aleatórios (UUID). A orientação é aplicada antes (mesmo
+  com EXIF malformado), perfis de cor como Display P3 são convertidos para sRGB e imagens de
+  16 bits são reduzidas para 8 bits sem estourar. O nome original serve só para exibição.
 - **Arquivos privados separados dos estáticos:** imagens ficam em `data/` e são entregues
   apenas pela sessão do Streamlit; `assets/` contém só o CSS.
 - **Gravação atômica** (arquivo temporário + renomear); temporários órfãos são apagados ao iniciar.
   Os uploads são processados em memória.
 - **SQL parametrizado** e lista de tabelas/colunas permitidas; vocabulários validados por
   restrições `CHECK` no banco.
-- **CSV exportado** com proteção contra injeção de fórmulas (`=`, `+`, `-`, `@`).
+- **CSV exportado** com proteção contra injeção de fórmulas (`=`, `+`, `-`, `@`) e com todos os
+  campos entre aspas, para que um `;` ou `,` dentro de um texto não crie uma célula nova.
+- **Exportações preparadas** (ZIP e backup) são descartadas da memória da sessão após qualquer
+  alteração ou exclusão, para nunca entregar fotos ou registros já apagados.
 - **URLs** aceitam só `http/https`; nenhum link é acessado pelo servidor.
 - **Senha opcional** (`IGT_APP_PASSWORD`), comparada em tempo constante e nunca armazenada.
+  As páginas ficam em `views/` (e não em `pages/`) de propósito: com uma pasta `pages/`, o
+  Streamlit ativa o modo multipágina antigo e permite abrir uma página pela URL sem passar pela
+  tela de senha.
+- **Servidor local por padrão:** escuta apenas em `localhost`; para usar na rede, é preciso
+  passar `--server.address 0.0.0.0` explicitamente (defina a senha antes).
 - **Erros:** o navegador mostra mensagens genéricas (`showErrorDetails = "none"`); os detalhes
   vão apenas para o terminal. Para depurar localmente: `streamlit run app.py --client.showErrorDetails=full`.
 - **Telemetria do Streamlit desativada** (`gatherUsageStats = false`).
@@ -306,6 +321,10 @@ formulários, confirmações de exclusão e a senha de acesso.
   automático simples.
 - A nitidez pode ser superestimada em fotos com muito ruído (grão) e a composição é uma aproximação.
 - Formatos HEIC/HEIF (comuns em iPhone) e GIF não são aceitos; converta para JPG antes.
+- Ao registrar métricas de uma data que já existe, campos vazios mantêm o valor salvo; para
+  apagar um valor, exclua o registro da data e registre de novo.
+- A importação CSV recusa datas futuras e números acima de 10¹²; linhas com erro são listadas
+  com o número da linha e não impedem a importação das demais.
 - As sugestões de texto usam modelos prontos (sem IA generativa); revise-as e personalize.
   A versão em inglês traduz apenas termos comuns.
 - Não há sincronização com o Instagram: métricas e follow-backs dependem de registro manual.
@@ -349,7 +368,7 @@ Codespaces parados continuam ocupando armazenamento da sua cota até serem apaga
 ```
 app.py                  entrada: senha opcional, navegação, CSS
 config.py               configuração por variáveis de ambiente e fuso horário
-pages/                  as 9 páginas (Streamlit)
+views/                  as 9 páginas (Streamlit) — não usar o nome pages/ (veja Segurança)
 ui/                     componentes de interface compartilhados (Streamlit)
 services/               regras de negócio e análises (sem Streamlit)
 database/               SQLite: conexão, schema/migrações, repositórios (sem Streamlit)
@@ -362,7 +381,7 @@ data/                   dados locais (ignorado pelo Git)
 ```
 
 `services/` e `database/` não importam Streamlit: uma futura API FastAPI pode reutilizá-los
-diretamente, trocando apenas a camada `pages/` + `ui/`.
+diretamente, trocando apenas a camada `views/` + `ui/`.
 
 ## Licença
 

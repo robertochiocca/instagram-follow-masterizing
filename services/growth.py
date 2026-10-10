@@ -80,14 +80,18 @@ def period_summary(df: pd.DataFrame, days: int | None, today: date) -> PeriodSum
     """Resumo do período [hoje − days, hoje]; `days=None` usa todo o histórico.
 
     A base é o último registro até o início do período (ou o primeiro dentro
-    dele), para que o ganho reflita o período inteiro.
+    dele), para que o ganho reflita o período inteiro. Sem dois registros
+    distintos para comparar, ganho, crescimento e ritmo ficam vazios (None) em
+    vez de mostrar um falso “0”.
     """
+    empty = PeriodSummary(None, None, None, None, None, None, None, None, 0)
     if df.empty:
-        return PeriodSummary(None, None, None, None, None, None, None, None, 0)
+        return empty
     end_ts = pd.Timestamp(today)
     data = df[df["date"] <= end_ts]
     if data.empty:
-        return PeriodSummary(None, None, None, None, None, None, None, None, 0)
+        return empty
+    last = data.iloc[-1]
     if days is None:
         base = data.iloc[0]
         window = data
@@ -95,15 +99,15 @@ def period_summary(df: pd.DataFrame, days: int | None, today: date) -> PeriodSum
         start_ts = end_ts - pd.Timedelta(days=days)
         before = data[data["date"] <= start_ts]
         window = data[data["date"] > start_ts]
-        base = before.iloc[-1] if not before.empty else (window.iloc[0] if not window.empty else None)
-        if base is None:
-            last = data.iloc[-1]
-            return PeriodSummary(
-                None, last["date"].date(), None, int(last["followers"]), None, None, None, None, 0
-            )
-    last = data.iloc[-1]
-    gain = net_gain(base["followers"], last["followers"])
+        if window.empty:  # nenhum registro novo no período
+            return PeriodSummary(None, last["date"].date(), None, int(last["followers"]),
+                                 None, None, None, None, 0)
+        base = before.iloc[-1] if not before.empty else window.iloc[0]
     span = (last["date"] - base["date"]).days
+    if span <= 0:  # só um registro: não há com o que comparar
+        return PeriodSummary(base["date"].date(), last["date"].date(), int(base["followers"]),
+                             int(last["followers"]), None, None, None, None, len(window))
+    gain = net_gain(base["followers"], last["followers"])
     posts = None
     if pd.notna(base.get("posts")) and pd.notna(last.get("posts")):
         posts = int(last["posts"] - base["posts"])
@@ -114,17 +118,24 @@ def period_summary(df: pd.DataFrame, days: int | None, today: date) -> PeriodSum
         current_followers=int(last["followers"]),
         net_gain=gain,
         growth_pct=growth_percent(base["followers"], last["followers"]),
-        avg_daily_gain=(gain / span) if span > 0 else None,
+        avg_daily_gain=gain / span,
         posts_published=posts,
         records=len(window),
     )
 
 
-def _period_table(df: pd.DataFrame, freq: str, label: str) -> pd.DataFrame:
+def _period_table(df: pd.DataFrame, freq: str, label: str, gap_label: str) -> pd.DataFrame:
+    """Último valor de cada período com registro.
+
+    Quando há períodos sem registro entre duas linhas, o ganho acumulado é
+    mostrado junto com o intervalo (`gap_label`) e a média por período, para não
+    atribuir várias semanas/meses de crescimento a um só.
+    """
+    columns = [label, "seguidores", "ganho_liquido", gap_label, "ganho_medio_periodo", "crescimento_pct",
+               "alcance", "visualizacoes", "visitas_perfil", "engajamento_pct"]
     if df.empty:
-        return pd.DataFrame(columns=[label, "seguidores", "ganho_liquido", "crescimento_pct"])
-    series = df.set_index("date")
-    agg = series.resample(freq).agg(
+        return pd.DataFrame(columns=columns)
+    full = df.set_index("date").resample(freq).agg(
         {
             "followers": "last",
             "reach": "last",
@@ -133,44 +144,63 @@ def _period_table(df: pd.DataFrame, freq: str, label: str) -> pd.DataFrame:
             "interactions": "last",
         }
     )
-    agg = agg.dropna(subset=["followers"])
+    present = full["followers"].notna().to_numpy()
+    positions = pd.Series(range(len(full)), dtype="float64")[present].to_numpy()
+    agg = full[present]
     prev = agg["followers"].shift(1)
+    gain = agg["followers"] - prev
+    gaps = pd.Series(positions).diff().to_numpy()
     out = pd.DataFrame(
         {
             label: agg.index.date,
             "seguidores": agg["followers"].astype(int).values,
-            "ganho_liquido": (agg["followers"] - prev).values,
-            "crescimento_pct": ((agg["followers"] - prev) / prev * 100).round(2).values,
+            "ganho_liquido": gain.values,
+            gap_label: gaps,
+            "ganho_medio_periodo": (gain.values / gaps).round(2),
+            # Base zero não tem crescimento percentual definido (fica vazio, como nos cartões).
+            "crescimento_pct": (gain / prev.where(prev > 0) * 100).round(2).values,
             "alcance": agg["reach"].values,
             "visualizacoes": agg["views"].values,
             "visitas_perfil": agg["profile_visits"].values,
             "engajamento_pct": [
                 engagement_rate(i, r) for i, r in zip(agg["interactions"], agg["reach"])
             ],
-        }
+        },
+        columns=columns,
     )
     out["engajamento_pct"] = pd.to_numeric(out["engajamento_pct"]).round(2)
     return out.reset_index(drop=True)
 
 
 def weekly_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Uma linha por semana (rótulo = domingo de fechamento); último valor da semana."""
-    return _period_table(df, "W-SUN", "semana_ate")
+    """Uma linha por semana com registro (rótulo = domingo de fechamento)."""
+    return _period_table(df, "W-SUN", "semana_ate", "semanas_desde_anterior")
 
 
 def monthly_table(df: pd.DataFrame) -> pd.DataFrame:
-    return _period_table(df, "ME", "mes_ate")
+    return _period_table(df, "ME", "mes_ate", "meses_desde_anterior")
 
 
-def average_daily_gain(df: pd.DataFrame, window_days: int | None = None) -> float | None:
-    """Ganho líquido médio por dia entre o primeiro e o último registro da janela."""
+def average_daily_gain(
+    df: pd.DataFrame, window_days: int | None = None, today: date | None = None
+) -> float | None:
+    """Ganho líquido médio por dia.
+
+    Com `window_days`, considera a janela que termina em `today` (ou no último
+    registro, se `today` não for informado) e exige ao menos um registro dentro
+    dela; registros antigos sozinhos não produzem um “ritmo atual”.
+    """
     if len(df) < 2:
         return None
     data = df
     if window_days:
-        start = df["date"].iloc[-1] - pd.Timedelta(days=window_days)
+        anchor = pd.Timestamp(today) if today else df["date"].iloc[-1]
+        start = anchor - pd.Timedelta(days=window_days)
+        inside = df[(df["date"] > start) & (df["date"] <= anchor)]
+        if inside.empty:
+            return None
         before = df[df["date"] <= start]
-        data = pd.concat([before.tail(1), df[df["date"] > start]])
+        data = pd.concat([before.tail(1), inside])
     if len(data) < 2:
         return None
     span = (data["date"].iloc[-1] - data["date"].iloc[0]).days
@@ -199,7 +229,8 @@ def days_to_goal(
     if monthly_change == 0:
         if daily_rate <= 0:
             return None
-        days = math.ceil((target - current) / daily_rate)
+        # round() evita erros de ponto flutuante (21 / 0,35 = 60,000000000000014).
+        days = math.ceil(round((target - current) / daily_rate, 9))
         return days if days <= max_days else None
     followers = float(current)
     for day in range(1, max_days + 1):

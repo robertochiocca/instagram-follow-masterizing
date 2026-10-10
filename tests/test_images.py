@@ -6,7 +6,7 @@ import os
 import pytest
 from PIL import Image
 
-from conftest import encode, scene
+from conftest import DISPLAY_P3_D50, encode, malformed_exif_orientation, matrix_icc_profile, scene
 from database import images as images_repo
 from services import image_analysis, photo_library
 from services.image_validation import ImageValidationError, safe_display_name, validate_image_bytes
@@ -265,3 +265,103 @@ def test_rescore_all_uses_new_weights(db, storage):
     weights = {k: 0 for k in image_analysis.SCORE_LABELS} | {"resolution": 1}
     assert photo_library.rescore_all(db, weights) == 1
     assert images_repo.get_image(db, out.image_id)["technical_score"] == pytest.approx(50.0, abs=0.1)
+
+
+# --- Regressões encontradas na revisão --------------------------------------------------------
+
+
+def test_camera_mpo_jpeg_is_accepted_as_jpeg():
+    buf = io.BytesIO()
+    scene(size=(400, 500)).save(buf, "MPO", save_all=True, append_images=[scene(size=(200, 250), seed=3)])
+    assert Image.open(io.BytesIO(buf.getvalue())).format == "MPO"
+    v = validate_image_bytes(buf.getvalue(), "DSC_0042.JPG", 5 * MB)
+    assert v.format == "JPEG" and (v.width, v.height) == (400, 500)
+
+
+def test_non_allowed_formats_are_never_decoded(monkeypatch):
+    import PIL.EpsImagePlugin as eps
+
+    calls = []
+    monkeypatch.setattr(eps, "Ghostscript", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(eps, "gs_binary", "gs", raising=False)
+    postscript = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 200\nshowpage\n%%EOF\n"
+    with pytest.raises(ImageValidationError):
+        validate_image_bytes(postscript, "foto.png", 5 * MB)
+    assert calls == []  # o Ghostscript nunca é acionado
+    tiff = io.BytesIO()
+    scene(size=(200, 200)).save(tiff, "TIFF")
+    with pytest.raises(ImageValidationError):
+        validate_image_bytes(tiff.getvalue(), "foto.png", 5 * MB)
+
+
+def test_16_bit_png_is_scaled_not_clipped():
+    import numpy as np
+
+    raw = np.linspace(0, 65535 * 0.3, 600 * 400).reshape(400, 600).astype(np.uint16)
+    buf = io.BytesIO()
+    Image.fromarray(raw).save(buf, "PNG")
+    v = validate_image_bytes(buf.getvalue(), "pb.png", 5 * MB)
+    mean = np.asarray(v.image).mean()
+    assert 35 < mean < 42  # ~0,15 × 255; antes ficava quase todo branco (253)
+
+
+def test_color_key_transparency_is_composited_on_white():
+    for mode, key in (("L", 0), ("RGB", (0, 0, 0))):
+        img = Image.new(mode, (200, 200), key)
+        img.paste(200 if mode == "L" else (200, 100, 50), (50, 50, 150, 150))
+        buf = io.BytesIO()
+        img.save(buf, "PNG", transparency=key)
+        v = validate_image_bytes(buf.getvalue(), "k.png", 5 * MB)
+        assert v.image.getpixel((2, 2)) == (255, 255, 255)
+        assert "transparency" not in v.image.info
+
+
+def test_malformed_exif_still_applies_orientation():
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 300), "red").save(buf, "JPEG", exif=malformed_exif_orientation(6))
+    v = validate_image_bytes(buf.getvalue(), "o.jpg", 5 * MB)
+    assert (v.width, v.height) == (300, 400)
+
+
+@pytest.mark.parametrize("fmt,ext", [("JPEG", "p3.jpg"), ("WEBP", "p3.webp"), ("PNG", "p3.png")])
+def test_wide_gamut_profile_is_converted_to_srgb(fmt, ext):
+    icc = matrix_icc_profile(DISPLAY_P3_D50)
+    buf = io.BytesIO()
+    options = {"quality": 100} if fmt != "PNG" else {}
+    Image.new("RGB", (100, 100), (200, 60, 40)).save(buf, fmt, icc_profile=icc, **options)
+    v = validate_image_bytes(buf.getvalue(), ext, 5 * MB)
+    r, g, b = v.image.getpixel((50, 50))
+    assert r > 212 and g < 45 and b < 20  # vermelho P3 fica mais saturado em sRGB
+    assert v.image.info == {}
+
+
+def test_invalid_icc_profile_is_ignored():
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 100), (10, 20, 30)).save(buf, "PNG", icc_profile=b"lixo" * 40)
+    v = validate_image_bytes(buf.getvalue(), "x.png", 5 * MB)
+    assert v.image.getpixel((5, 5)) == (10, 20, 30)
+
+
+def test_saved_copies_drop_jpeg_comments(storage):
+    buf = io.BytesIO()
+    scene(size=(300, 300)).save(buf, "JPEG", comment=b"Owner: Maria | GPS -23.55")
+    v = validate_image_bytes(buf.getvalue(), "c.jpg", 5 * MB)
+    name, thumb = storage.save(v, "own")
+    for path in (storage.path("own", name), storage.thumb_path("own", thumb)):
+        with Image.open(path) as saved:
+            assert "comment" not in saved.info and not saved.getexif()
+
+
+def test_extreme_aspect_ratio_has_finite_scores():
+    import math
+
+    tall = Image.linear_gradient("L").resize((64, 40000)).convert("RGB")
+    m = image_analysis.compute_metrics(tall)
+    assert m.sharpness == 0.0
+    s = image_analysis.score_metrics(m)
+    assert math.isfinite(s.total)
+    assert next(c.score for c in s.components if c.key == "sharpness") == 0.0
+    nan_metrics = image_analysis.compute_metrics(scene(size=(200, 200)))
+    nan_metrics.sharpness = float("nan")
+    assert next(c.score for c in image_analysis.score_metrics(nan_metrics).components
+                if c.key == "sharpness") == 0.0

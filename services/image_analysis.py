@@ -51,6 +51,8 @@ FEED_MIN_RATIO, FEED_MAX_RATIO = 0.8, 1.91
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    if x != x:  # NaN nunca vira nota máxima
+        return lo
     return max(lo, min(hi, x))
 
 
@@ -80,6 +82,8 @@ def _tile_sharpness(lap: np.ndarray, grid: int = 4) -> float:
             tile = lap[i * h // grid : (i + 1) * h // grid, j * w // grid : (j + 1) * w // grid]
             if tile.size:
                 values.append(float(tile.var()))
+    if not values:  # imagem extremamente estreita: não há área para medir
+        return 0.0
     values.sort(reverse=True)
     top = values[: max(1, len(values) // 4)]
     return float(np.mean(top))
@@ -220,8 +224,9 @@ def score_metrics(m: ImageMetrics, weights: dict[str, float] | None = None) -> T
         contrast = max(0.5, 1 - (c - hi) / 0.24)
 
     s_lo, s_hi = SHARPNESS_RANGE
+    sharpness = m.sharpness if math.isfinite(m.sharpness) else 0.0
     sharp = _clamp(
-        (math.log10(max(m.sharpness, 1e-6)) - math.log10(s_lo)) / (math.log10(s_hi) - math.log10(s_lo))
+        (math.log10(max(sharpness, 1e-6)) - math.log10(s_lo)) / (math.log10(s_hi) - math.log10(s_lo))
     )
 
     clipped = m.clipped_highlights + m.clipped_shadows

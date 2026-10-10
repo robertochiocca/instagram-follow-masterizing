@@ -99,7 +99,11 @@ else:
     tab_w, tab_m = st.tabs(["Semanal", "Mensal"])
     column_config = {
         "seguidores": st.column_config.NumberColumn("Seguidores", format="%d"),
-        "ganho_liquido": st.column_config.NumberColumn("Ganho líquido", format="%+d"),
+        "ganho_liquido": st.column_config.NumberColumn(
+            "Ganho líquido", format="%+d", help="Desde o registro anterior (pode cobrir mais de um período)."),
+        "semanas_desde_anterior": st.column_config.NumberColumn("Semanas", format="%d"),
+        "meses_desde_anterior": st.column_config.NumberColumn("Meses", format="%d"),
+        "ganho_medio_periodo": st.column_config.NumberColumn("Média/período", format="%+.1f"),
         "crescimento_pct": st.column_config.NumberColumn("Cresc. %", format="%.2f%%"),
         "alcance": st.column_config.NumberColumn("Alcance", format="%d"),
         "visualizacoes": st.column_config.NumberColumn("Visualizações", format="%d"),
@@ -107,7 +111,7 @@ else:
         "engajamento_pct": st.column_config.NumberColumn("Engaj. %", format="%.2f%%"),
     }
     with tab_w:
-        if weekly["ganho_liquido"].notna().any():
+        if weekly["ganho_medio_periodo"].notna().any():
             st.altair_chart(charts.weekly_gain_chart(weekly), width="stretch")
         st.dataframe(
             weekly, hide_index=True, width="stretch", placeholder="—",
@@ -134,7 +138,8 @@ tab_form, tab_csv, tab_list = st.tabs(["Registro do dia", "Importar / exportar C
 with tab_form:
     st.caption(
         "Copie os números do app (Painel profissional → Insights). Use sempre o mesmo período "
-        "para alcance e visualizações (recomendado: últimos 7 dias). Campos vazios ficam sem valor."
+        "para alcance e visualizações (recomendado: últimos 7 dias). Se a data já tiver registro, "
+        "campos vazios mantêm o valor que já estava salvo."
     )
     default_followers = int(df.iloc[-1]["followers"]) if not df.empty else int(profile.get("followers") or 0)
     with st.form("metric_form", clear_on_submit=False):
@@ -172,6 +177,10 @@ with tab_csv:
                        "text/csv", icon=":material/description:")
     uploaded = st.file_uploader("Arquivo CSV", type=["csv"], key="metrics_csv")
     overwrite = st.checkbox("Substituir registros de datas que já existem", value=True)
+    last_import = st.session_state.pop("metrics_import_errors", None)
+    if last_import:
+        st.warning(last_import[0])
+        st.write("\n".join(f"- {e}" for e in last_import[1][:20]))
     if uploaded is not None and st.button("Importar CSV", type="primary", icon=":material/upload:"):
         try:
             report = csv_io.import_metrics_csv(db, uploaded.getvalue(), overwrite=overwrite)
@@ -180,7 +189,12 @@ with tab_csv:
         else:
             msg = f"Importação: {report.inserted} novos, {report.updated} atualizados, {report.skipped} ignorados."
             if report.errors:
-                st.warning(msg + f" {len(report.errors)} linha(s) com erro:")
+                summary_msg = msg + f" {len(report.errors)} linha(s) com erro:"
+                if report.inserted + report.updated:
+                    # Recarrega para mostrar os dados novos; os erros continuam visíveis.
+                    st.session_state["metrics_import_errors"] = (summary_msg, report.errors)
+                    done(msg, "warning")
+                st.warning(summary_msg)
                 st.write("\n".join(f"- {e}" for e in report.errors[:20]))
             else:
                 done(msg)
@@ -218,7 +232,7 @@ st.caption(
     "planejar, não como promessa."
 )
 
-hist_rate = growth.average_daily_gain(df, window_days=30) if not df.empty else None
+hist_rate = growth.average_daily_gain(df, window_days=30, today=day) if not df.empty else None
 current_default = (
     int(df.iloc[-1]["followers"]) if not df.empty else int(profile.get("followers") or 69)
 )
