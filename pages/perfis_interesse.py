@@ -10,7 +10,7 @@ from models.vocab import DISCOVERY_SOURCES, INTEREST_STATUS, PRIORITY
 from services import follows, interests
 from services.csv_io import to_csv_bytes
 from services.handles import profile_url
-from ui.components import confirm_button, done, empty_state, fmt_date, page_header, paginate
+from ui.components import actions_row, confirm_button, done, empty_state, fmt_date, page_header, paginate
 from ui.state import get_db
 
 db = get_db()
@@ -98,7 +98,7 @@ if view == "Tabela":
 else:
     for r in paginate(rows, "interest_page", per_page=15):
         with st.container(border=True):
-            top_a, top_b = st.columns([3, 1], vertical_alignment="center")
+            top_a, top_b = st.columns([3, 1], vertical_alignment="center", wrap=False)
             top_a.markdown(f"**@{r['username']}** {PRIORITY_ICONS.get(r['priority'], '')} "
                            f"· {r.get('category') or 'sem categoria'}")
             with top_b:
@@ -113,26 +113,26 @@ else:
             st.caption(" · ".join(meta))
             if r.get("notes"):
                 st.caption(f"📝 {r['notes']}")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.link_button("Abrir perfil", profile_url(r["username"], r.get("url")),
-                           icon=":material/open_in_new:", width="stretch")
             editing = st.session_state.get("edit_interest") == r["id"]
-            if c2.button("Fechar edição" if editing else "Editar", key=f"edit_{r['id']}",
-                         icon=":material/edit:", width="stretch"):
-                st.session_state["edit_interest"] = None if editing else r["id"]
-                st.rerun()
-            if r["status"] != "arquivado":
-                if c3.button("Arquivar", key=f"arch_{r['id']}", icon=":material/archive:", width="stretch"):
-                    interests.set_status(db, r["id"], "arquivado")
-                    done(f"@{r['username']} arquivado.")
-            elif c3.button("Reativar", key=f"unarch_{r['id']}", icon=":material/unarchive:", width="stretch"):
-                interests.set_status(db, r["id"], "revisar")
-                done(f"@{r['username']} reativado.")
-            if c4.button("Registrar que segui", key=f"follow_{r['id']}", icon=":material/how_to_reg:",
-                         width="stretch", help="Cria um registro manual na página Acompanhamento."):
-                follows.add_follow(db, {"username": r["username"], "url": r.get("url"),
-                                        "category": r.get("category"), "status": "pendente"})
-                done(f"@{r['username']} adicionado ao Acompanhamento.")
+            with actions_row():
+                st.link_button("Abrir perfil", profile_url(r["username"], r.get("url")),
+                               icon=":material/open_in_new:")
+                if st.button("Fechar edição" if editing else "Editar", key=f"edit_{r['id']}",
+                             icon=":material/edit:"):
+                    st.session_state["edit_interest"] = None if editing else r["id"]
+                    st.rerun()
+                if r["status"] != "arquivado":
+                    if st.button("Arquivar", key=f"arch_{r['id']}", icon=":material/archive:"):
+                        interests.set_status(db, r["id"], "arquivado")
+                        done(f"@{r['username']} arquivado.")
+                elif st.button("Reativar", key=f"unarch_{r['id']}", icon=":material/unarchive:"):
+                    interests.set_status(db, r["id"], "revisar")
+                    done(f"@{r['username']} reativado.")
+                if st.button("Registrar que segui", key=f"follow_{r['id']}", icon=":material/how_to_reg:",
+                             help="Cria um registro manual na página Acompanhamento."):
+                    follows.add_follow(db, {"username": r["username"], "url": r.get("url"),
+                                            "category": r.get("category"), "status": "pendente"})
+                    done(f"@{r['username']} adicionado ao Acompanhamento.")
             if editing:
                 data = interest_form(f"edit_form_{r['id']}", r)
                 if data:

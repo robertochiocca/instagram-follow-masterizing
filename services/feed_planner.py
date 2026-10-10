@@ -33,6 +33,7 @@ from models.vocab import CONTEXT, FRAMING, LIGHTING
 from services import image_analysis
 from services.image_storage import ImageStorage
 from services.photo_library import metrics_of
+from services.preferences import feature_phrase
 
 GRID_COLUMNS = 3
 NEAR_DUPLICATE_BITS = 10
@@ -259,13 +260,26 @@ def repetition_warnings(photos: list[FeedPhoto]) -> list[str]:
     """Detecta repetição visual aproximada e excesso de um mesmo tipo de foto."""
     out = []
     n = len(photos)
+    # Agrupa fotos quase iguais (união de pares) para gerar um aviso por grupo.
+    parent = list(range(n))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
     for i in range(n):
         for j in range(i + 1, n):
             if image_analysis.hamming(photos[i].dhash, photos[j].dhash) <= NEAR_DUPLICATE_BITS:
-                out.append(
-                    f"As fotos nas posições {i + 1} e {j + 1} parecem quase iguais; "
-                    "considere manter só uma."
-                )
+                parent[root(j)] = root(i)
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(root(i), []).append(i + 1)
+    for members in groups.values():
+        if len(members) > 1:
+            listed = ", ".join(map(str, members[:-1])) + f" e {members[-1]}"
+            out.append(f"As fotos nas posições {listed} parecem quase iguais; considere manter só uma.")
     if n >= 4:
         tag_counts: dict[str, int] = {}
         for p in photos:
@@ -276,12 +290,14 @@ def repetition_warnings(photos: list[FeedPhoto]) -> list[str]:
                 out.append(f"{count} de {n} fotos têm a tag “{tag}”. Alterne com outros temas.")
         looks: dict[str, int] = {}
         for p in photos:
-            key = LIGHTING.get(p.lighting, "") if p.lighting else f"{p.tone}/{p.temperature}"
+            if p.lighting:
+                key = LIGHTING.get(p.lighting, p.lighting).lower()
+            else:
+                key = f"{feature_phrase('tone', p.tone)} e {feature_phrase('temperature', p.temperature)}"
             looks[key] = looks.get(key, 0) + 1
         key, count = max(looks.items(), key=lambda kv: kv[1])
         if count / n > 0.6:
-            desc = key if "/" not in key else "brilho " + key.replace("/", " e tons ")
-            out.append(f"{count} de {n} fotos têm iluminação semelhante ({desc}). Varie luz e horário.")
+            out.append(f"{count} de {n} fotos têm iluminação semelhante ({key}). Varie luz e horário.")
         framings: dict[str, int] = {}
         for p in photos:
             if p.framing:
@@ -357,8 +373,19 @@ def sequence_dataframe(rows: list[dict], pinned_positions: set[int] | None = Non
     return pd.DataFrame(data)
 
 
-def grid_preview_png(storage: ImageStorage, rows: list[dict], cell: int = 300, gap: int = 4) -> bytes:
-    """Prévia da grade (miniaturas recortadas em 3:4, como na grade do perfil)."""
+def grid_preview_png(
+    storage: ImageStorage,
+    rows: list[dict],
+    cell: int = 300,
+    gap: int = 4,
+    pinned_positions: set[int] | None = None,
+) -> bytes:
+    """Prévia da grade (miniaturas recortadas em 3:4, como na grade do perfil).
+
+    Cada célula mostra o número da posição; posições fixadas ganham um
+    marcador amarelo no canto superior direito.
+    """
+    pinned_positions = pinned_positions or set()
     cols = GRID_COLUMNS
     n_rows = max(1, math.ceil(len(rows) / cols))
     cell_h = int(cell * 4 / 3)
@@ -373,8 +400,12 @@ def grid_preview_png(storage: ImageStorage, rows: list[dict], cell: int = 300, g
             canvas.paste(tile, (x, y))
         except (OSError, ValueError):
             draw.rectangle([x, y, x + cell, y + cell_h], fill=(230, 230, 230))
-        draw.rectangle([x + 6, y + 6, x + 40, y + 34], fill=(0, 0, 0))
-        draw.text((x + 12, y + 12), str(pos + 1), fill=(255, 255, 255))
+        size = max(18, cell // 9)
+        draw.rectangle([x + 6, y + 6, x + 6 + size * 2, y + 6 + size], fill=(0, 0, 0))
+        draw.text((x + 10, y + 8), str(pos + 1), fill=(255, 255, 255), font_size=size - 4)
+        if pos in pinned_positions:
+            draw.ellipse([x + cell - 6 - size, y + 6, x + cell - 6, y + 6 + size],
+                         fill=(250, 178, 25), outline=(0, 0, 0), width=2)
     buf = io.BytesIO()
     canvas.save(buf, format="PNG", optimize=True)
     return buf.getvalue()

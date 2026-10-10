@@ -11,7 +11,7 @@ from models.defaults import DEFAULT_PREFERENCE_GROUP_WEIGHTS, DEFAULT_SCORE_WEIG
 from services import data_management, photo_library
 from services.image_analysis import SCORE_LABELS
 from services.preferences import GROUP_LABELS
-from ui.components import confirm_button, done, fmt_bytes, page_header, typed_confirmation
+from ui.components import confirm_button, done, fmt_bytes, metric_grid, page_header, typed_confirmation
 from ui.state import get_config, get_db, get_storage, max_upload_mb
 
 db = get_db()
@@ -147,10 +147,11 @@ with tab_general:
 with tab_data:
     counts = data_management.summary_counts(db)
     files, size = storage.usage()
-    a, b, c = st.columns(3)
-    a.metric("Minhas fotos", counts["own_images"])
-    b.metric("Referências", counts["reference_images"])
-    c.metric("Espaço das imagens", fmt_bytes(size))
+    metric_grid([
+        ("Minhas fotos", counts["own_images"]),
+        ("Referências", counts["reference_images"]),
+        ("Espaço das imagens", fmt_bytes(size)),
+    ])
     st.caption(
         f"Perfis de interesse: {counts['interest_profiles']} · Acompanhamento: {counts['follow_tracking']} · "
         f"Métricas: {counts['metrics']} · Conteúdos planejados: {counts['content_plan']} · "

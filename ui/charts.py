@@ -54,7 +54,8 @@ def followers_chart(df: pd.DataFrame, target: int | None = None) -> alt.Chart:
         .encode(x="Data:T", y="Seguidores:Q", text=alt.Text("Seguidores:Q", format=",d"))
     )
     layers = [line, points, label]
-    if target:
+    # A meta só aparece quando está perto dos dados; senão achataria a linha real.
+    if target and target <= data["Seguidores"].max() * 1.3:
         rule = alt.Chart(pd.DataFrame({"Meta": [target]})).mark_rule(color=GOAL, strokeWidth=1)
         layers.append(rule.encode(y="Meta:Q", tooltip=[alt.Tooltip("Meta:Q", format=",d")]))
     return _style(alt.layer(*layers))

@@ -13,7 +13,7 @@ from database.settings import get_setting, set_setting
 from models.vocab import CONTENT_OBJECTIVES, CONTENT_STATUS, CONTENT_TYPES, WEEKDAYS
 from services import content_planner as cp
 from services.csv_io import to_csv_bytes
-from ui.components import confirm_button, done, empty_state, fmt_date, fmt_num, page_header
+from ui.components import confirm_button, done, empty_state, fmt_date, fmt_num, metric_grid, page_header
 from ui.state import get_db
 
 db = get_db()
@@ -111,7 +111,7 @@ with tab_cal:
                 current_week = week
                 st.markdown(f"##### Semana de {fmt_date(week)}")
             with st.container(border=True):
-                top_a, top_b = st.columns([3, 1], vertical_alignment="center")
+                top_a, top_b = st.columns([3, 1], vertical_alignment="center", wrap=False)
                 top_a.markdown(
                     f"{TYPE_ICONS[it['content_type']]} **{WEEKDAYS[planned.weekday()]} {fmt_date(planned)}** · "
                     f"{CONTENT_TYPES[it['content_type']]} · {it.get('theme') or 'sem tema'}"
@@ -126,9 +126,8 @@ with tab_cal:
                     eng = cp.engagement(it)
                     if eng is not None:
                         st.caption(f"Engajamento: {fmt_num(eng, 1, '%')} · alcance {it.get('reach')}")
-                c1, c2 = st.columns(2)
-                if it["status"] != "publicado" and c1.button("Marcar como publicado", key=f"pub_{it['id']}",
-                                                             icon=":material/check_circle:", width="stretch"):
+                if it["status"] != "publicado" and st.button("Marcar como publicado", key=f"pub_{it['id']}",
+                                                             icon=":material/check_circle:"):
                     cp.update_item(db, it["id"], {"status": "publicado"})
                     done("Marcado como publicado. Registre os resultados depois em “Editar”.")
                 with st.expander("Editar / resultados / excluir"):
@@ -202,11 +201,12 @@ with tab_results:
         st.info("Marque conteúdos como publicados e registre alcance e interações para comparar resultados.")
     else:
         avg = table["engajamento_pct"].mean()
-        a, b, c = st.columns(3)
-        a.metric("Publicações com resultado", int(table["engajamento_pct"].notna().sum()))
-        b.metric("Engajamento médio", fmt_num(avg, 1, "%") if pd.notna(avg) else "—",
-                 help="(curtidas + comentários + salvamentos + compartilhamentos) ÷ alcance × 100")
-        c.metric("Seguidores ganhos (soma)", int(pd.to_numeric(table["novos_seguidores"]).fillna(0).sum()))
+        metric_grid([
+            ("Com resultado", int(table["engajamento_pct"].notna().sum())),
+            ("Engajamento médio", fmt_num(avg, 1, "%") if pd.notna(avg) else "—",
+             "(curtidas + comentários + salvamentos + compartilhamentos) ÷ alcance × 100"),
+            ("Seguidores ganhos", int(pd.to_numeric(table["novos_seguidores"]).fillna(0).sum())),
+        ])
         st.dataframe(
             table, hide_index=True, width="stretch",
             column_config={

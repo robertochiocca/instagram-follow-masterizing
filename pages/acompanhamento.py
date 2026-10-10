@@ -12,7 +12,17 @@ from models.vocab import FOLLOW_STATUS
 from services import follows
 from services.csv_io import to_csv_bytes
 from services.handles import profile_url
-from ui.components import confirm_button, done, empty_state, fmt_date, fmt_num, page_header, paginate
+from ui.components import (
+    actions_row,
+    confirm_button,
+    done,
+    empty_state,
+    fmt_date,
+    fmt_num,
+    metric_grid,
+    page_header,
+    paginate,
+)
 from ui.state import get_db
 
 db = get_db()
@@ -60,13 +70,14 @@ if not everything:
 
 active = [r for r in everything if not r["archived"]]
 stats = follows.summary(active, day)
-a, b, c, d = st.columns(4)
-a.metric("Registros ativos", stats["total"])
-b.metric("Pendentes", stats["counts"]["pendente"])
-c.metric("Seguiram de volta", stats["counts"]["seguiu_de_volta"])
-d.metric("Taxa de follow-back",
-         fmt_num(stats["followback_rate"], 0, "%") if stats["followback_rate"] is not None else "—",
-         help="Seguiram de volta ÷ (seguiram + não seguiram). Pendentes não entram na conta.")
+metric_grid([
+    ("Registros ativos", stats["total"]),
+    ("Pendentes", stats["counts"]["pendente"]),
+    ("Seguiram de volta", stats["counts"]["seguiu_de_volta"]),
+    ("Taxa de follow-back",
+     fmt_num(stats["followback_rate"], 0, "%") if stats["followback_rate"] is not None else "—",
+     "Seguiram de volta ÷ (seguiram + não seguiram). Pendentes não entram na conta."),
+])
 if stats["stale_pending"]:
     st.info(f"{len(stats['stale_pending'])} registro(s) pendente(s) há mais de 7 dias sem revisão.")
 if stats["followed_last_7_days"] > follows.WEEKLY_FOLLOW_REMINDER:
@@ -98,7 +109,7 @@ st.caption(f"{len(rows)} registro(s)")
 
 for r in paginate(rows, "follow_page", per_page=15):
     with st.container(border=True):
-        top_a, top_b = st.columns([3, 1], vertical_alignment="center")
+        top_a, top_b = st.columns([3, 1], vertical_alignment="center", wrap=False)
         days_ago = (day - date.fromisoformat(r["followed_at"])).days
         top_a.markdown(
             f"**@{r['username']}** · seguiu em {fmt_date(r['followed_at'])} "
@@ -112,19 +123,19 @@ for r in paginate(rows, "follow_page", per_page=15):
         if r.get("notes"):
             st.caption(f"📝 {r['notes']}")
 
-        c1, c2, c3 = st.columns(3)
-        c1.link_button("Abrir perfil", profile_url(r["username"], r.get("url")),
-                       icon=":material/open_in_new:", width="stretch")
-        if c2.button("Marcar como revisado", key=f"rev_{r['id']}", icon=":material/task_alt:", width="stretch"):
-            follows.mark_reviewed(db, r["id"])
-            done("Revisão registrada.")
-        if r["archived"]:
-            if c3.button("Desarquivar", key=f"unarch_{r['id']}", icon=":material/unarchive:", width="stretch"):
-                follows.set_archived(db, r["id"], False)
-                done("Registro desarquivado.")
-        elif c3.button("Arquivar", key=f"arch_{r['id']}", icon=":material/archive:", width="stretch"):
-            follows.set_archived(db, r["id"], True)
-            done("Registro arquivado.")
+        with actions_row():
+            st.link_button("Abrir perfil", profile_url(r["username"], r.get("url")),
+                           icon=":material/open_in_new:")
+            if st.button("Marcar como revisado", key=f"rev_{r['id']}", icon=":material/task_alt:"):
+                follows.mark_reviewed(db, r["id"])
+                done("Revisão registrada.")
+            if r["archived"]:
+                if st.button("Desarquivar", key=f"unarch_{r['id']}", icon=":material/unarchive:"):
+                    follows.set_archived(db, r["id"], False)
+                    done("Registro desarquivado.")
+            elif st.button("Arquivar", key=f"arch_{r['id']}", icon=":material/archive:"):
+                follows.set_archived(db, r["id"], True)
+                done("Registro arquivado.")
 
         new_status = st.segmented_control(
             "Atualizar status", list(FOLLOW_STATUS), format_func=FOLLOW_STATUS.get,

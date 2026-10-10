@@ -15,6 +15,7 @@ from ui.components import (
     confirm_button,
     data_badge,
     done,
+    metric_grid,
     empty_state,
     fmt_date,
     fmt_int,
@@ -57,20 +58,15 @@ else:
     last = df.iloc[-1]
 
     data_badge(estimate=False)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Seguidores atuais", fmt_int(summary.current_followers),
-              help=f"Último registro: {fmt_date(last['date'].date())}")
-    c2.metric("Meta", fmt_int(target))
-    c3.metric(
-        "Ganho líquido",
-        fmt_int(summary.net_gain) if summary.net_gain is not None else "—",
-        help="Seguidores no fim do período − seguidores no início (pode ser negativo).",
-    )
-    c4.metric(
-        "Crescimento",
-        fmt_num(summary.growth_pct, 1, "%") if summary.growth_pct is not None else "—",
-        help="Ganho líquido ÷ seguidores no início do período × 100.",
-    )
+    metric_grid([
+        ("Seguidores atuais", fmt_int(summary.current_followers),
+         f"Último registro: {fmt_date(last['date'].date())}"),
+        ("Meta", fmt_int(target)),
+        ("Ganho líquido", fmt_int(summary.net_gain) if summary.net_gain is not None else "—",
+         "Seguidores no fim do período − seguidores no início (pode ser negativo)."),
+        ("Crescimento", fmt_num(summary.growth_pct, 1, "%") if summary.growth_pct is not None else "—",
+         "Ganho líquido ÷ seguidores no início do período × 100."),
+    ])
     if summary.start_date:
         st.caption(
             f"Período comparado: {fmt_date(summary.start_date)} → {fmt_date(summary.end_date)}"
@@ -80,16 +76,17 @@ else:
     progress = min(1.0, max(0.0, (summary.current_followers or 0) / target)) if target else 0
     st.progress(progress, text=f"{progress:.0%} da meta de {fmt_int(target)} seguidores")
 
-    d1, d2, d3, d4, d5 = st.columns(5)
-    d1.metric("Publicações no período",
-              fmt_int(summary.posts_published) if summary.posts_published is not None else "—",
-              help="Diferença no total de publicações informado.")
-    d2.metric("Alcance", fmt_int(last["reach"]), help="Contas alcançadas (último registro).")
-    d3.metric("Visualizações", fmt_int(last["views"]), help="Último registro.")
-    d4.metric("Visitas ao perfil", fmt_int(last["profile_visits"]), help="Último registro.")
     rate = growth.engagement_rate(last["interactions"], last["reach"])
-    d5.metric("Engajamento", fmt_num(rate, 1, "%") if rate is not None else "—",
-              help="Interações ÷ contas alcançadas × 100 (precisa dos dois valores).")
+    metric_grid([
+        ("Novos posts",
+         fmt_int(summary.posts_published) if summary.posts_published is not None else "—",
+         "Diferença no total de publicações informado no período."),
+        ("Alcance", fmt_int(last["reach"]), "Contas alcançadas (último registro)."),
+        ("Visualizações", fmt_int(last["views"]), "Último registro."),
+        ("Visitas ao perfil", fmt_int(last["profile_visits"]), "Último registro."),
+        ("Engajamento", fmt_num(rate, 1, "%") if rate is not None else "—",
+         "Interações ÷ contas alcançadas × 100 (precisa dos dois valores)."),
+    ])
 
     st.subheader("Evolução de seguidores")
     if len(df) >= 2:
@@ -113,7 +110,7 @@ else:
         if weekly["ganho_liquido"].notna().any():
             st.altair_chart(charts.weekly_gain_chart(weekly), width="stretch")
         st.dataframe(
-            weekly, hide_index=True, width="stretch",
+            weekly, hide_index=True, width="stretch", placeholder="—",
             column_config={"semana_ate": st.column_config.DateColumn("Semana até", format="DD/MM/YYYY"),
                            **column_config},
         )
@@ -121,7 +118,7 @@ else:
                            "semanal.csv", "text/csv", icon=":material/download:")
     with tab_m:
         st.dataframe(
-            monthly, hide_index=True, width="stretch",
+            monthly, hide_index=True, width="stretch", placeholder="—",
             column_config={"mes_ate": st.column_config.DateColumn("Mês até", format="DD/MM/YYYY"),
                            **column_config},
         )
@@ -199,7 +196,7 @@ with tab_list:
         st.caption("Nenhum registro.")
     for r in reversed(rows[-60:]):
         with st.container(border=True):
-            a, b = st.columns([3, 1], vertical_alignment="center")
+            a, b = st.columns([3, 1], vertical_alignment="center", wrap=False)
             extras = [f"{lbl} {fmt_int(r[k])}" for k, lbl in
                       (("reach", "alcance"), ("views", "visualizações"), ("profile_visits", "visitas"))
                       if r.get(k) is not None]
@@ -261,7 +258,7 @@ scenario_df = pd.DataFrame(
         for s in scenarios
     ]
 )
-st.dataframe(scenario_df, hide_index=True, width="stretch")
+st.dataframe(scenario_df, hide_index=True, width="stretch", placeholder="—")
 if base_rate <= 0:
     st.warning(
         "Com ritmo zero ou negativo a meta não é atingida. Veja no plano abaixo o ritmo necessário."

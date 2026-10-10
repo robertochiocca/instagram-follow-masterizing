@@ -10,7 +10,7 @@ import re
 from urllib.parse import urlparse
 
 USERNAME_RE = re.compile(r"^[a-z0-9._]{1,30}$")
-INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com", "m.instagram.com"}
+_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 _RESERVED_PATHS = {"p", "reel", "reels", "stories", "explore", "accounts", "direct", "tv"}
 MAX_URL_LENGTH = 300
 
@@ -42,6 +42,8 @@ def normalize_url(url: str | None) -> str | None:
     if len(text) > MAX_URL_LENGTH:
         raise ValueError("URL longa demais.")
     if "://" not in text:
+        if _SCHEME_RE.match(text):  # ex.: javascript:, data:, mailto:
+            raise ValueError("URL inválida. Use um endereço começando com https://")
         text = "https://" + text
     parsed = urlparse(text)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or " " in text:

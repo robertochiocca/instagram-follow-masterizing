@@ -15,7 +15,7 @@ from models.defaults import DEFAULT_FEED_WEIGHTS
 from services import feed_planner as fp
 from services import preferences
 from services.csv_io import to_csv_bytes
-from ui.components import confirm_button, done, empty_state, fmt_date, page_header
+from ui.components import confirm_button, done, empty_state, fmt_date, metric_grid, page_header
 from ui.state import get_db, get_storage
 
 db = get_db()
@@ -76,14 +76,14 @@ with st.expander(f"1. Fotos consideradas ({len(pool)} de {len(own)})", expanded=
         images_repo.set_feed_pool(db, [r["id"] for r in own], False)
         st.session_state.pop(DRAFT, None)
         st.rerun()
-    cols = st.columns(4)
-    for i, r in enumerate(own):
-        with cols[i % 4]:
-            data = tile_bytes(r)
-            if data:
-                st.image(data, width="stretch")
-            st.checkbox(f"{r['technical_score']:.0f}/100", value=bool(r.get("in_feed_pool")),
-                        key=f"pool_{r['id']}", on_change=toggle_pool, args=(r["id"],))
+    with st.container(horizontal=True, gap="small"):
+        for r in own:
+            with st.container(width=110):
+                data = tile_bytes(r)
+                if data:
+                    st.image(data, width="stretch")
+                st.checkbox(f"{r['technical_score']:.0f}", value=bool(r.get("in_feed_pool")),
+                            key=f"pool_{r['id']}", on_change=toggle_pool, args=(r["id"],))
 
 if len(pool) < 2:
     st.info("Selecione pelo menos 2 fotos para montar uma sequência.")
@@ -156,28 +156,26 @@ else:
         draft["pinned"] = [p for p in draft["pinned"] if p != pid]
         draft["reasons"] = {}
 
-    for start in range(0, len(seq), fp.GRID_COLUMNS):
-        cols = st.columns(fp.GRID_COLUMNS, gap="small")
-        for offset, col in enumerate(cols):
-            pos = start + offset
-            if pos >= len(seq):
-                continue
-            pid = seq[pos]
-            with col.container(border=True):
+    # A grade é desenhada como uma imagem única: mantém as 3 colunas em qualquer tela.
+    pinned_now = {i for i, pid in enumerate(seq) if pid in draft["pinned"]}
+    st.image(fp.grid_preview_png(storage, [by_id[pid] for pid in seq], cell=240, pinned_positions=pinned_now),
+             width="stretch")
+    st.caption("Marcador amarelo = posição fixada. Toque no número para mover, fixar ou retirar a foto.")
+    with st.container(horizontal=True, gap="small"):
+        for pos, pid in enumerate(seq):
+            pinned = pid in draft["pinned"]
+            with st.popover(f"{pos + 1}{' 📌' if pinned else ''}"):
                 data = tile_bytes(by_id[pid])
                 if data:
-                    st.image(data, width="stretch")
-                pinned = pid in draft["pinned"]
-                st.markdown(f"**{pos + 1}** {'📌' if pinned else ''} · {by_id[pid]['technical_score']:.0f}/100")
-                c1, c2, c3, c4 = st.columns(4, gap="small")
-                c1.button("◀", key=f"l_{pos}", on_click=move, args=(pos, -1), disabled=pos == 0,
-                          help="Mover para antes", width="stretch")
-                c2.button("▶", key=f"r_{pos}", on_click=move, args=(pos, 1), disabled=pos == len(seq) - 1,
-                          help="Mover para depois", width="stretch")
-                c3.button("📌", key=f"p_{pos}", on_click=toggle_pin, args=(pid,),
-                          help="Fixar/soltar nesta posição", type="primary" if pinned else "secondary",
-                          width="stretch")
-                c4.button("✕", key=f"x_{pos}", on_click=remove, args=(pos,), help="Tirar da sequência",
+                    st.image(data, width=120)
+                st.caption(f"{by_id[pid].get('original_name') or ''} · {by_id[pid]['technical_score']:.0f}/100")
+                st.button("◀ Mover para antes", key=f"l_{pos}", on_click=move, args=(pos, -1),
+                          disabled=pos == 0, width="stretch")
+                st.button("Mover para depois ▶", key=f"r_{pos}", on_click=move, args=(pos, 1),
+                          disabled=pos == len(seq) - 1, width="stretch")
+                st.button("Soltar posição" if pinned else "📌 Fixar nesta posição", key=f"p_{pos}",
+                          on_click=toggle_pin, args=(pid,), width="stretch")
+                st.button("✕ Tirar da sequência", key=f"x_{pos}", on_click=remove, args=(pos,),
                           width="stretch")
 
     missing = [pid for pid in photos if pid not in seq]
@@ -192,19 +190,24 @@ else:
 
     seq_photos = [photos[pid] for pid in seq]
     ev = fp.evaluate_sequence(seq_photos, weights)
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Equilíbrio geral", f"{ev.overall:.0f}")
-    m2.metric("Qualidade", f"{ev.quality:.0f}")
-    m3.metric("Diversidade", f"{ev.diversity:.0f}")
-    m4.metric("Coerência de cor", f"{ev.coherence:.0f}")
-    m5.metric("Preferência", f"{ev.preference:.0f}")
+    metric_grid([
+        ("Equilíbrio geral", f"{ev.overall:.0f}"),
+        ("Qualidade", f"{ev.quality:.0f}"),
+        ("Diversidade", f"{ev.diversity:.0f}"),
+        ("Coerência de cor", f"{ev.coherence:.0f}"),
+        ("Preferência", f"{ev.preference:.0f}"),
+    ], width=140)
     st.caption("Indicadores de 0 a 100 para comparar sequências entre si — não preveem desempenho.")
 
-    notes = ev.adjacent_alerts + fp.repetition_warnings(seq_photos) + fp.alternation_suggestions(seq_photos)
+    notes = list(dict.fromkeys(
+        fp.repetition_warnings(seq_photos) + ev.adjacent_alerts + fp.alternation_suggestions(seq_photos)
+    ))
     if notes:
         with st.container(border=True):
             st.markdown("**Sugestões para esta sequência**")
-            st.markdown("\n".join(f"- {n}" for n in dict.fromkeys(notes)))
+            st.markdown("\n".join(f"- {n}" for n in notes[:8]))
+            if len(notes) > 8:
+                st.caption(f"+ {len(notes) - 8} observação(ões) semelhantes.")
     if draft.get("reasons"):
         with st.expander("Por que cada foto está nessa posição"):
             for pos, reasons in sorted(draft["reasons"].items()):

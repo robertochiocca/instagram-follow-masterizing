@@ -6,7 +6,7 @@ import streamlit as st
 
 from database import images as images_repo
 from services import preferences
-from ui.components import fmt_num, page_header
+from ui.components import fmt_num, metric_grid, page_header
 from ui.image_views import (
     detail_view,
     filter_controls,
@@ -63,10 +63,11 @@ else:
         no_images_state(KIND)
     else:
         scores = [r["technical_score"] or 0 for r in rows]
-        a, b, c = st.columns(3)
-        a.metric("Fotos", len(rows))
-        b.metric("Pontuação média", fmt_num(sum(scores) / len(scores), 0))
-        c.metric("No feed", sum(1 for r in rows if r.get("in_feed_pool")))
+        metric_grid([
+            ("Fotos", len(rows)),
+            ("Pontuação média", fmt_num(sum(scores) / len(scores), 0)),
+            ("Consideradas p/ feed", sum(1 for r in rows if r.get("in_feed_pool"))),
+        ])
         filtered = filter_controls(db, rows, KIND)
         if not filtered:
             st.info("Nenhuma foto corresponde aos filtros.")

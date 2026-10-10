@@ -96,45 +96,47 @@ def show_upload_errors(kind: str) -> None:
 # --- Galeria -----------------------------------------------------------------------------
 
 
-def _card_caption(row: dict, kind: str) -> str:
+CARD_WIDTH = 168  # cabem 2 cartões por linha num celular de 390 px
+
+
+def _card_caption(row: dict, kind: str) -> tuple[str, str]:
     parts = [f"**{row['technical_score']:.0f}**/100" if row.get("technical_score") is not None else ""]
     if row.get("user_rating"):
-        parts.append("★" * int(row["user_rating"]))
-    if kind == "own" and row.get("favorite"):
-        parts.append("❤️")
+        parts.append(f"{row['user_rating']}★")
     if kind == "own" and row.get("in_feed_pool"):
-        parts.append("▦ feed")
+        parts.append("▦")
     if kind == "reference" and row.get("reaction"):
         parts.append(REACTIONS[row["reaction"]])
-    tags = row.get("tags") or []
-    if tags:
-        parts.append(" ".join(f"#{t}" for t in tags[:3]))
-    return " · ".join(p for p in parts if p)
+    tags = " ".join(f"#{t}" for t in (row.get("tags") or [])[:2])
+    return " · ".join(p for p in parts if p), tags
 
 
-def gallery(db: Database, storage: ImageStorage, rows: list[dict], kind: str, columns: int = 3) -> None:
+def gallery(db: Database, storage: ImageStorage, rows: list[dict], kind: str) -> None:
     page_rows = paginate(rows, key=f"page_{kind}", per_page=12)
-    for start in range(0, len(page_rows), columns):
-        cols = st.columns(columns)
-        for col, row in zip(cols, page_rows[start : start + columns]):
-            with col.container(border=True):
+    with st.container(horizontal=True, gap="small"):
+        for row in page_rows:
+            with st.container(border=True, width=CARD_WIDTH):
                 try:
                     st.image(str(storage.thumb_path(kind, row["thumb_filename"])), width="stretch")
                 except Exception:
                     st.caption("Miniatura indisponível.")
-                st.markdown(_card_caption(row, kind))
-                if st.button("Abrir", key=f"open_{kind}_{row['id']}", icon=":material/open_in_full:",
-                             width="stretch"):
-                    open_image(kind, row["id"])
-                    st.rerun()
+                line, tags = _card_caption(row, kind)
+                st.markdown(line)
+                if tags:
+                    st.caption(tags)
+                with st.container(horizontal=True, gap="small"):
+                    if st.button("Abrir", key=f"open_{kind}_{row['id']}", width="stretch"):
+                        open_image(kind, row["id"])
+                        st.rerun()
+                    if kind == "own":
+                        fav = bool(row.get("favorite"))
+                        if st.button("♥" if fav else "♡", key=f"fav_{row['id']}",
+                                     help="Remover dos favoritos" if fav else "Favoritar",
+                                     type="primary" if fav else "secondary"):
+                            images_repo.update_image(db, row["id"], {"favorite": not fav})
+                            st.rerun()
                 if kind == "reference":
                     _quick_reaction(db, row)
-                else:
-                    fav = bool(row.get("favorite"))
-                    if st.button("Remover favorita" if fav else "Favoritar",
-                                 key=f"fav_{row['id']}", icon=":material/favorite:", width="stretch"):
-                        images_repo.update_image(db, row["id"], {"favorite": not fav})
-                        st.rerun()
 
 
 def _quick_reaction(db: Database, row: dict) -> None:

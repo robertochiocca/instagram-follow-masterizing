@@ -146,3 +146,19 @@ def fmt_bytes(size: int) -> str:
             return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}".replace(".", ",")
         size /= 1024
     return str(size)
+
+
+def metric_grid(items: Sequence[tuple], width: int = 170) -> None:
+    """Métricas em cartões de largura fixa que quebram linha conforme a tela.
+
+    Cada item é (rótulo, valor) ou (rótulo, valor, ajuda).
+    """
+    with st.container(horizontal=True, gap="small"):
+        for item in items:
+            label, value, *rest = item
+            st.metric(label, value, help=rest[0] if rest else None, width=width, border=True)
+
+
+def actions_row():
+    """Linha de botões que quebra para a linha seguinte em telas estreitas."""
+    return st.container(horizontal=True, gap="small")

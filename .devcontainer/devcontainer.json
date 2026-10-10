@@ -1,0 +1,23 @@
+{
+  "name": "Instagram Growth Tool",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install -r requirements-dev.txt",
+  "forwardPorts": [8501],
+  "portsAttributes": {
+    "8501": {
+      "label": "Instagram Growth Tool",
+      "onAutoForward": "notify"
+    }
+  },
+  "containerEnv": {
+    "IGT_TIMEZONE": "America/Sao_Paulo"
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    },
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}
