@@ -1,0 +1,7 @@
+# Dependências de execução — versões fixadas e testadas com Python 3.11 a 3.13.
+# Para atualizar, veja a seção "Atualizar dependências" do README.
+streamlit==1.64.0
+pandas==3.0.5
+pillow==12.3.0
+numpy==2.4.6
+altair==6.2.2
